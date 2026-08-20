@@ -211,6 +211,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ services, onRefr
     loadData();
   };
 
+  // Authorization Security Guard
+  if (user && user.role !== 'admin') {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-16 text-center space-y-6">
+        <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto shadow-sm">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+            Administrator Access Restricted
+          </h2>
+          <p className="text-slate-600 text-sm leading-relaxed">
+            This portal is restricted to authorized Clothes Spa Laundry administrators. Your current account ({user.email}) is signed in as a <span className="font-bold capitalize">{user.role}</span>.
+          </p>
+        </div>
+        <div className="p-4 bg-slate-100 rounded-2xl text-xs text-slate-600 border border-slate-200">
+          To manage operations, bookings, or M-Pesa reconciliations, please sign in with administrator credentials.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
       {/* Admin Welcome Top Bar */}
