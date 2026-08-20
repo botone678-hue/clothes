@@ -1,0 +1,6 @@
+{
+  "name": "Clothes Spa Laundry",
+  "description": "Full production laundry management, customer booking, M-Pesa payments, driver dispatch, and live real-time operations in Hawaii Area, Eldoret, Kenya.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
