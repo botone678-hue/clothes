@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../lib/storage';
+import { db, subscribeToEvent } from '../lib/storage';
 import { Order } from '../types';
 import { OrderTrackingTimeline } from '../components/common/OrderTrackingTimeline';
 import { Search, Package, MapPin, Calendar, Clock, Phone, AlertCircle, Sparkles } from 'lucide-react';
@@ -14,12 +14,6 @@ export const TrackingPage: React.FC<TrackingPageProps> = ({ initialOrderId, setC
   const [order, setOrder] = useState<Order | null>(null);
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (initialOrderId) {
-      handleSearch(initialOrderId);
-    }
-  }, [initialOrderId]);
 
   const handleSearch = async (termToUse?: string) => {
     const term = (termToUse ?? searchTerm).trim();
@@ -39,6 +33,32 @@ export const TrackingPage: React.FC<TrackingPageProps> = ({ initialOrderId, setC
     setOrder(found || null);
     setLoading(false);
   };
+
+  useEffect(() => {
+    if (initialOrderId) {
+      handleSearch(initialOrderId);
+    }
+  }, [initialOrderId]);
+
+  // Realtime subscription to live update tracked order status/payment
+  useEffect(() => {
+    const unsub = subscribeToEvent('orders', async () => {
+      if (searchTerm.trim()) {
+        const orders = await db.getOrders();
+        const found = orders.find(
+          (o) =>
+            o.order_number.toLowerCase() === searchTerm.trim().toLowerCase() ||
+            o.id === searchTerm.trim() ||
+            (o.customer_phone && o.customer_phone.includes(searchTerm.trim()))
+        );
+        if (found) {
+          setOrder(found);
+        }
+      }
+    });
+
+    return () => unsub();
+  }, [searchTerm]);
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-8">

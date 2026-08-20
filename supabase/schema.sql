@@ -214,20 +214,24 @@ CREATE TABLE IF NOT EXISTS business_settings (
     delivery_fee NUMERIC(10, 2) NOT NULL DEFAULT 150.00,
     currency TEXT NOT NULL DEFAULT 'KES',
     minimum_order_amount NUMERIC(10, 2) NOT NULL DEFAULT 300.00,
-    mpesa_shortcode TEXT NOT NULL DEFAULT '174379',
-    mpesa_type TEXT NOT NULL DEFAULT 'Buy Goods / Till',
+    mpesa_phone TEXT NOT NULL DEFAULT '0741775878',
+    mpesa_type TEXT NOT NULL DEFAULT 'Pochi la Biashara',
+    mpesa_name TEXT NOT NULL DEFAULT 'Clothes Spa Laundry',
     support_email TEXT NOT NULL DEFAULT 'info@clothesspalaundry.co.ke',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- SEED BUSINESS SETTINGS
-INSERT INTO business_settings (id, business_name, phone, location, opening_hours, delivery_fee, currency, minimum_order_amount, mpesa_shortcode)
-VALUES ('default', 'Clothes Spa Laundry', '0741775878', 'Hawaii Area, Eldoret, Kenya', 'Mon-Sat: 7:00 AM - 8:00 PM | Sun: 9:00 AM - 6:00 PM', 150.00, 'KES', 300.00, '174379')
+INSERT INTO business_settings (id, business_name, phone, location, opening_hours, delivery_fee, currency, minimum_order_amount, mpesa_phone, mpesa_type, mpesa_name)
+VALUES ('default', 'Clothes Spa Laundry', '0741775878', 'Hawaii Area, Eldoret, Kenya', 'Mon-Sat: 7:00 AM - 8:00 PM | Sun: 9:00 AM - 6:00 PM', 150.00, 'KES', 300.00, '0741775878', 'Pochi la Biashara', 'Clothes Spa Laundry')
 ON CONFLICT (id) DO UPDATE SET
     phone = EXCLUDED.phone,
     location = EXCLUDED.location,
-    delivery_fee = EXCLUDED.delivery_fee;
+    delivery_fee = EXCLUDED.delivery_fee,
+    mpesa_phone = EXCLUDED.mpesa_phone,
+    mpesa_type = EXCLUDED.mpesa_type,
+    mpesa_name = EXCLUDED.mpesa_name;
 
 -- SEED INITIAL SERVICES FOR CLOTHES SPA LAUNDRY
 INSERT INTO services (name, description, category, price_type, base_price, image_url, estimated_duration)
