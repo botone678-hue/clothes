@@ -54,130 +54,23 @@ app.post('/api/orders/validate', (req: Request, res: Response) => {
   }
 });
 
-// M-PESA STK PUSH (Daraja API / Express Payment Integration)
-app.post('/api/mpesa/stkpush', async (req: Request, res: Response) => {
-  try {
-    const { phone, amount, orderNumber, accountReference = 'ClothesSpa' } = req.body;
-
-    if (!phone || !amount || !orderNumber) {
-      return res.status(400).json({ error: 'Phone, amount and orderNumber are required' });
-    }
-
-    // Clean and validate Kenyan phone number
-    let cleanedPhone = phone.trim().replace(/[^\d+]/g, '');
-    if (cleanedPhone.startsWith('+254')) {
-      cleanedPhone = cleanedPhone.substring(1);
-    } else if (cleanedPhone.startsWith('0')) {
-      cleanedPhone = '254' + cleanedPhone.substring(1);
-    } else if (cleanedPhone.startsWith('7') || cleanedPhone.startsWith('1')) {
-      cleanedPhone = '254' + cleanedPhone;
-    }
-
-    if (!/^254[71]\d{8}$/.test(cleanedPhone)) {
-      return res.status(400).json({ error: 'Please enter a valid Safaricom/Kenyan mobile number (e.g. 0741775878)' });
-    }
-
-    const consumerKey = process.env.MPESA_CONSUMER_KEY;
-    const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
-    const passkey = process.env.MPESA_PASSKEY;
-    const shortcode = process.env.MPESA_SHORTCODE || '174379';
-
-    // If live Daraja credentials are provided in env, make real Safaricom Daraja request
-    if (consumerKey && consumerSecret && passkey) {
-      try {
-        const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
-        const env = process.env.MPESA_ENVIRONMENT === 'live' ? 'api.safaricom.co.ke' : 'sandbox.safaricom.co.ke';
-        
-        // 1. Get OAuth Token
-        const tokenRes = await fetch(`https://${env}/oauth/v1/generate?grant_type=client_credentials`, {
-          headers: { Authorization: `Basic ${auth}` },
-        });
-        const tokenData = await tokenRes.json();
-        const accessToken = tokenData.access_token;
-
-        // 2. Generate Timestamp and Password
-        const date = new Date();
-        const timestamp = date.toISOString().replace(/[^0-9]/g, '').slice(0, 14);
-        const password = Buffer.from(`${shortcode}${passkey}${timestamp}`).toString('base64');
-
-        // 3. Initiate STK Push
-        const stkRes = await fetch(`https://${env}/mpesa/stkpush/v1/processrequest`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            BusinessShortCode: shortcode,
-            Password: password,
-            Timestamp: timestamp,
-            TransactionType: 'CustomerPayBillOnline',
-            Amount: Math.round(Number(amount)),
-            PartyA: cleanedPhone,
-            PartyB: shortcode,
-            PhoneNumber: cleanedPhone,
-            CallBackURL: process.env.MPESA_CALLBACK_URL || 'https://clothesspalaundry.co.ke/api/mpesa/callback',
-            AccountReference: accountReference.substring(0, 12),
-            TransactionDesc: `Payment for ${orderNumber}`,
-          }),
-        });
-
-        const stkData = await stkRes.json();
-        return res.json({
-          success: true,
-          mode: 'daraja_live',
-          checkoutRequestID: stkData.CheckoutRequestID,
-          merchantRequestID: stkData.MerchantRequestID,
-          customerMessage: stkData.CustomerMessage || `STK push prompt sent to ${phone}. Enter your M-Pesa PIN on your phone.`,
-        });
-      } catch (darajaErr: any) {
-        console.error('Daraja API error:', darajaErr);
-        // Fallback to verified local processor response with guidance
-      }
-    }
-
-    // High-fidelity standard STK Push response with transaction reference generator
-    const checkoutRequestID = `ws_CO_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-    const randomTxCode = 'CSL' + Math.random().toString(36).substring(2, 9).toUpperCase();
-
-    res.json({
-      success: true,
-      mode: 'express_stk',
-      checkoutRequestID,
-      merchantRequestID: `MR_${Date.now()}`,
-      responseCode: '0',
-      responseDescription: 'Success. Request accepted for processing',
-      customerMessage: `M-Pesa STK push prompt sent to ${phone}. Please enter your M-Pesa PIN on your phone to complete KES ${Number(amount).toLocaleString()} for ${orderNumber}.`,
-      transactionCode: randomTxCode,
-      instructions: `If PIN prompt does not appear, send KES ${Number(amount).toLocaleString()} to Buy Goods / Till ${shortcode} (Clothes Spa Laundry) or call 0741775878.`,
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'M-Pesa processing error' });
-  }
-});
-
-// M-Pesa Status Query
-app.post('/api/mpesa/query', (req: Request, res: Response) => {
-  const { checkoutRequestID } = req.body;
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let txCode = 'CSL';
-  for (let i = 0; i < 7; i++) {
-    txCode += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-
+// Business info route for payment instructions
+app.get('/api/payment/info', (req: Request, res: Response) => {
   res.json({
-    success: true,
-    resultCode: '0',
-    resultDesc: 'The service request is processed successfully.',
-    transactionCode: txCode,
-    checkoutRequestID: checkoutRequestID || `ws_CO_${Date.now()}`,
+    businessName: 'Clothes Spa Laundry',
+    paymentMethod: 'Pochi la Biashara',
+    mpesaPhone: '0741775878',
+    location: 'Hawaii Area, Eldoret, Kenya',
+    instructions: [
+      'Open M-Pesa on your phone (SIM toolkit, M-Pesa App, or *334#)',
+      'Select Lipa na M-Pesa',
+      'Select Pochi la Biashara',
+      'Enter Phone Number: 0741775878',
+      'Enter Amount due',
+      'Enter your M-Pesa PIN and confirm payment to Clothes Spa Laundry',
+      'Enter the Safaricom confirmation code (e.g. QKJ4...) into the reference box to submit for verification',
+    ],
   });
-});
-
-// M-Pesa Webhook Callback
-app.post('/api/mpesa/callback', (req: Request, res: Response) => {
-  console.log('M-Pesa Callback Received:', JSON.stringify(req.body));
-  res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
 });
 
 // --- VITE / STATIC SERVING ---

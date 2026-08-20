@@ -105,11 +105,11 @@ export const BookPage: React.FC<BookPageProps> = ({ services, setCurrentTab, onV
 
   // Payment
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('mpesa');
-  const [mpesaPhone, setMpesaPhone] = useState(user?.phone || '0741775878');
+  const [payerPhone, setPayerPhone] = useState(user?.phone || '0741775878');
+  const [mpesaTransactionRef, setMpesaTransactionRef] = useState('');
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
-  const [mpesaSuccessCode, setMpesaSuccessCode] = useState<string | null>(null);
 
   // Financial calculations
   const subtotal = cart.reduce((sum, item) => sum + item.service.base_price * item.quantity, 0);
@@ -149,46 +149,27 @@ export const BookPage: React.FC<BookPageProps> = ({ services, setCurrentTab, onV
     Boolean(pickupAddress.trim()) &&
     Boolean(pickupArea);
 
-  // Final Submission with M-Pesa STK push or Cash on Delivery
+  // Honest Payment Flow:
+  // Customer creates booking -> order is created with payment_status = pending
+  // If customer pays via Pochi la Biashara (0741775878) and submits transaction code:
+  // -> payment_status transitions to 'verification_required'
+  // -> Admin verifies/reconciles the payment and marks as 'paid'
   const handleCompleteOrder = async () => {
     setPaymentError(null);
     setIsProcessingPayment(true);
 
     try {
-      // 1. If M-Pesa selected, initiate STK push via backend route
-      let txReference = '';
+      const cleanRef = mpesaTransactionRef.trim().toUpperCase();
+
       if (paymentMethod === 'mpesa') {
-        const cleanPhone = normalizeKenyanPhone(mpesaPhone);
-        if (!isValidKenyanPhone(cleanPhone)) {
-          setPaymentError('Please enter a valid Kenyan phone number (e.g. 0741775878 or +254712345678).');
+        if (!cleanRef || cleanRef.length < 5) {
+          setPaymentError('Please enter your genuine M-Pesa transaction reference code (from your Safaricom confirmation SMS) to submit for verification.');
           setIsProcessingPayment(false);
           return;
         }
-
-        // Call backend STK push route
-        try {
-          const stkRes = await fetch('/api/mpesa/stkpush', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              phone: cleanPhone,
-              amount: total,
-              orderNumber: 'CSL-PENDING',
-              accountReference: 'ClothesSpa',
-            }),
-          });
-          const stkData = await stkRes.json();
-          if (stkData.transactionCode) {
-            txReference = stkData.transactionCode;
-            setMpesaSuccessCode(txReference);
-          }
-        } catch (e) {
-          console.warn('Backend STK push network notice:', e);
-          txReference = 'CSL' + Math.random().toString(36).substring(2, 9).toUpperCase();
-        }
       }
 
-      // 2. Create the real database order
+      // 1. Create the database order with initial pending status
       const result = await db.createOrder({
         customerId: user?.id || `cust-${Date.now()}`,
         customerName,
@@ -206,10 +187,15 @@ export const BookPage: React.FC<BookPageProps> = ({ services, setCurrentTab, onV
         deliveryFee,
       });
 
-      // 3. If M-Pesa, mark payment status
-      if (paymentMethod === 'mpesa') {
-        await db.updatePaymentStatus(result.order.id, 'paid', txReference);
-        result.order.payment_status = 'paid';
+      // 2. If M-Pesa reference is submitted, set status to 'verification_required' (NEVER auto-paid)
+      if (paymentMethod === 'mpesa' && cleanRef) {
+        await db.updatePaymentStatus(result.order.id, 'verification_required', cleanRef, {
+          payer_phone: payerPhone,
+          pochi_recipient: '0741775878',
+          business_name: 'Clothes Spa Laundry',
+          submitted_at: new Date().toISOString(),
+        });
+        result.order.payment_status = 'verification_required';
       }
 
       setCreatedOrder(result.order);
@@ -626,8 +612,8 @@ export const BookPage: React.FC<BookPageProps> = ({ services, setCurrentTab, onV
             <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
               Select Payment Method
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {/* M-Pesa Option */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* M-Pesa Pochi la Biashara Option */}
               <button
                 type="button"
                 onClick={() => setPaymentMethod('mpesa')}
@@ -638,12 +624,12 @@ export const BookPage: React.FC<BookPageProps> = ({ services, setCurrentTab, onV
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-sm text-emerald-900">M-Pesa STK</span>
+                  <span className="font-bold text-sm text-emerald-900">M-Pesa (Pochi la Biashara)</span>
                   <CheckCircle2
                     className={`w-4 h-4 ${paymentMethod === 'mpesa' ? 'text-emerald-600' : 'text-slate-300'}`}
                   />
                 </div>
-                <p className="text-[11px] text-emerald-700 mt-1">Instant Daraja prompt on your phone</p>
+                <p className="text-[11px] text-emerald-700 mt-1">Send to 0741775878 (Clothes Spa Laundry)</p>
               </button>
 
               {/* Cash on Delivery */}
@@ -657,56 +643,76 @@ export const BookPage: React.FC<BookPageProps> = ({ services, setCurrentTab, onV
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-sm text-slate-900">Cash on Delivery</span>
+                  <span className="font-bold text-sm text-slate-900">Cash on Collection / Delivery</span>
                   <CheckCircle2
                     className={`w-4 h-4 ${paymentMethod === 'cash_on_delivery' ? 'text-sky-600' : 'text-slate-300'}`}
                   />
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">Pay driver upon delivery in Eldoret</p>
-              </button>
-
-              {/* Card Option */}
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('card')}
-                className={`p-4 rounded-2xl border text-left transition cursor-pointer ${
-                  paymentMethod === 'card'
-                    ? 'bg-indigo-50/70 border-indigo-500 ring-2 ring-indigo-100'
-                    : 'border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-sm text-slate-900">Debit / Credit Card</span>
-                  <CheckCircle2
-                    className={`w-4 h-4 ${paymentMethod === 'card' ? 'text-indigo-600' : 'text-slate-300'}`}
-                  />
-                </div>
-                <p className="text-[11px] text-slate-500 mt-1">Visa / Mastercard secure checkout</p>
+                <p className="text-[11px] text-slate-500 mt-1">Pay driver upon collection or delivery in Eldoret</p>
               </button>
             </div>
           </div>
 
-          {/* If M-Pesa is selected, show Phone input for STK Push */}
+          {/* If M-Pesa is selected, show clear Pochi la Biashara instructions and reference input */}
           {paymentMethod === 'mpesa' && (
-            <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200 space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-emerald-900">M-Pesa Mobile Number for PIN Prompt</label>
-                <span className="text-[11px] text-emerald-700 font-mono font-bold">Till: 174379</span>
+            <div className="p-5 bg-emerald-50/60 rounded-2xl border border-emerald-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-emerald-100 pb-3">
+                <div>
+                  <h4 className="font-black text-sm text-emerald-950">Pochi la Biashara Payment Instructions</h4>
+                  <p className="text-[11px] text-emerald-800">Clothes Spa Laundry official M-Pesa business account</p>
+                </div>
+                <span className="px-3 py-1 bg-emerald-600 text-white font-mono font-black text-xs rounded-full">
+                  0741775878
+                </span>
               </div>
-              <div className="relative">
-                <Phone className="w-4 h-4 text-emerald-600 absolute left-3.5 top-3" />
-                <input
-                  type="tel"
-                  required
-                  value={mpesaPhone}
-                  onChange={(e) => setMpesaPhone(e.target.value)}
-                  placeholder="e.g. 0741775878"
-                  className="w-full pl-10 pr-3.5 py-2.5 bg-white border border-emerald-300 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
+
+              {/* Step by step guide */}
+              <div className="bg-white/80 rounded-xl p-3.5 border border-emerald-100 space-y-2 text-xs text-slate-700">
+                <p className="font-bold text-emerald-900 text-[11px] uppercase tracking-wider">How to Pay from Your Phone:</p>
+                <ol className="list-decimal list-inside space-y-1 text-slate-700">
+                  <li>Open M-Pesa on your phone (SIM Toolkit, M-Pesa App, or dial <span className="font-mono font-bold">*334#</span>)</li>
+                  <li>Select <strong className="text-slate-900">Lipa na M-Pesa</strong></li>
+                  <li>Select <strong className="text-slate-900">Pochi la Biashara</strong></li>
+                  <li>Enter Phone Number: <strong className="font-mono text-emerald-800 bg-emerald-100/70 px-1.5 py-0.5 rounded">0741775878</strong></li>
+                  <li>Enter Amount: <strong className="font-mono text-slate-900">KES {total.toLocaleString()}</strong></li>
+                  <li>Enter your M-Pesa PIN and confirm recipient is <strong className="text-emerald-900">Clothes Spa Laundry</strong></li>
+                </ol>
               </div>
-              <p className="text-[11px] text-emerald-800">
-                You will receive a prompt on your phone requesting your M-Pesa PIN for KES {total.toLocaleString()}.
-              </p>
+
+              {/* Reference submission */}
+              <div className="space-y-3 pt-1">
+                <div>
+                  <label className="block text-xs font-bold text-emerald-950 mb-1">
+                    M-Pesa Transaction Reference Code <span className="text-rose-600">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={mpesaTransactionRef}
+                    onChange={(e) => setMpesaTransactionRef(e.target.value.toUpperCase())}
+                    placeholder="e.g. QKJ49XYZ12 (From your Safaricom SMS)"
+                    className="w-full px-3.5 py-2.5 bg-white border border-emerald-300 rounded-xl text-sm font-mono font-bold text-slate-900 uppercase focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder:normal-case placeholder:font-normal placeholder:text-slate-400"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-emerald-950 mb-1">
+                      Payer Phone Number (Optional)
+                    </label>
+                    <input
+                      type="tel"
+                      value={payerPhone}
+                      onChange={(e) => setPayerPhone(e.target.value)}
+                      placeholder="0741775878"
+                      className="w-full px-3 py-2 bg-white border border-emerald-200 rounded-xl text-xs text-slate-800"
+                    />
+                  </div>
+                  <div className="flex items-center text-[11px] text-emerald-800 bg-emerald-100/50 p-2.5 rounded-xl border border-emerald-200/60">
+                    <span>Your reference will be submitted to the accounts team for instant reconciliation.</span>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -738,7 +744,7 @@ export const BookPage: React.FC<BookPageProps> = ({ services, setCurrentTab, onV
               {isProcessingPayment ? (
                 <>
                   <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                  <span>Processing Payment & Order...</span>
+                  <span>Submitting Order...</span>
                 </>
               ) : (
                 <>
@@ -762,11 +768,11 @@ export const BookPage: React.FC<BookPageProps> = ({ services, setCurrentTab, onV
 
           <div className="space-y-1">
             <span className="px-3 py-1 bg-emerald-50 text-emerald-800 rounded-full text-xs font-bold">
-              Order Confirmed & Saved
+              Order Received Successfully
             </span>
             <h2 className="text-3xl font-black text-slate-900">Order #{createdOrder.order_number}</h2>
             <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto">
-              Thank you {createdOrder.customer_name}! Our Clothes Spa dispatch team in Hawaii Area has received your booking.
+              Thank you {createdOrder.customer_name}! Our Clothes Spa team in Hawaii Area, Eldoret has received your booking.
             </p>
           </div>
 
@@ -786,21 +792,41 @@ export const BookPage: React.FC<BookPageProps> = ({ services, setCurrentTab, onV
             </div>
             <div className="flex justify-between py-1 border-b border-slate-200">
               <span>Payment Status</span>
-              <span className="font-bold text-emerald-700 uppercase">
-                {createdOrder.payment_status} ({createdOrder.payment_method})
+              <span
+                className={`font-bold uppercase px-2 py-0.5 rounded text-[11px] ${
+                  createdOrder.payment_status === 'paid'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : createdOrder.payment_status === 'verification_required'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-slate-200 text-slate-800'
+                }`}
+              >
+                {createdOrder.payment_status.replace('_', ' ')}
               </span>
             </div>
-            {mpesaSuccessCode && (
+            {mpesaTransactionRef && (
               <div className="flex justify-between py-1 border-b border-slate-200 font-mono text-emerald-800">
-                <span>M-Pesa Reference</span>
-                <span className="font-bold">{mpesaSuccessCode}</span>
+                <span>Submitted M-Pesa Ref</span>
+                <span className="font-bold">{mpesaTransactionRef}</span>
               </div>
             )}
             <div className="flex justify-between py-2 font-black text-slate-900 text-sm">
-              <span>Total Paid / Due</span>
+              <span>Total Amount</span>
               <span className="text-sky-700">KES {createdOrder.total.toLocaleString()}</span>
             </div>
           </div>
+
+          {createdOrder.payment_status === 'verification_required' && (
+            <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 text-left space-y-1">
+              <p className="font-bold flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-amber-700" />
+                Payment Verification Pending
+              </p>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Your payment reference has been recorded. Our accounts team is verifying the transaction against Clothes Spa Laundry Pochi la Biashara (0741775878). Your order timeline will update automatically.
+              </p>
+            </div>
+          )}
 
           <div className="flex flex-col sm:flex-row gap-3 pt-2">
             <button
@@ -816,6 +842,7 @@ export const BookPage: React.FC<BookPageProps> = ({ services, setCurrentTab, onV
               onClick={() => {
                 setCurrentStep(1);
                 setCart([]);
+                setMpesaTransactionRef('');
               }}
               className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition cursor-pointer"
             >

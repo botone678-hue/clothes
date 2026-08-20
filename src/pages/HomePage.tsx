@@ -112,7 +112,7 @@ export const HomePage: React.FC<HomePageProps> = ({ services, setCurrentTab, onO
                   </div>
                   <div>
                     <p className="text-[11px] font-bold text-slate-500 uppercase">M-Pesa Supported</p>
-                    <p className="text-xs font-black text-slate-900">Buy Goods Till: 174379</p>
+                    <p className="text-xs font-black text-slate-900">Pochi la Biashara: 0741775878</p>
                   </div>
                 </div>
 
@@ -376,7 +376,7 @@ export const HomePage: React.FC<HomePageProps> = ({ services, setCurrentTab, onO
               name: 'Faith Chebet',
               location: 'Hawaii Area, Eldoret',
               comment:
-                'Clothes Spa is right in our neighborhood. The duvet wash service took away all the dust and allergens. Very fast pickup and the M-Pesa STK push made payment super easy.',
+                'Clothes Spa is right in our neighborhood. The duvet wash service took away all the dust and allergens. Very fast pickup and the M-Pesa Pochi payment made the experience seamless.',
               rating: 5,
             },
             {

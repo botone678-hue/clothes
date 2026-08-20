@@ -18,9 +18,12 @@ import { CustomerOrders } from './pages/CustomerOrders';
 import { CustomerAddresses } from './pages/CustomerAddresses';
 import { DriverDashboard } from './pages/driver/DriverDashboard';
 import { AdminDashboard } from './pages/admin/AdminDashboard';
+import { PrivacyPage } from './pages/PrivacyPage';
+import { TermsPage } from './pages/TermsPage';
+import { NotFoundPage } from './pages/NotFoundPage';
 
 const MainAppContent: React.FC = () => {
-  const { user, currentRole } = useAuth();
+  const { user, role } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>('home');
   const [services, setServices] = useState<Service[]>([]);
   const [trackingOrderId, setTrackingOrderId] = useState<string | undefined>(undefined);
@@ -67,6 +70,69 @@ const MainAppContent: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // Render the appropriate main view based on currentTab
+  const renderContent = () => {
+    switch (currentTab) {
+      case 'home':
+        return (
+          <HomePage
+            services={services}
+            setCurrentTab={handleSetTab}
+            onOpenAuth={() => setIsAuthModalOpen(true)}
+          />
+        );
+      case 'services':
+        return <ServicesPage services={services} setCurrentTab={handleSetTab} />;
+      case 'about':
+        return <AboutPage setCurrentTab={handleSetTab} />;
+      case 'contact':
+        return <ContactPage />;
+      case 'book':
+        return (
+          <BookPage
+            services={services}
+            setCurrentTab={handleSetTab}
+            onViewOrder={handleTrackOrder}
+          />
+        );
+      case 'tracking':
+        return (
+          <TrackingPage
+            initialOrderId={trackingOrderId}
+            setCurrentTab={handleSetTab}
+          />
+        );
+      case 'orders':
+      case 'customer-orders':
+        return (
+          <CustomerOrders
+            setCurrentTab={handleSetTab}
+            onTrackOrder={handleTrackOrder}
+          />
+        );
+      case 'addresses':
+      case 'customer-addresses':
+        return <CustomerAddresses />;
+      case 'driver':
+      case 'driver-dashboard':
+        return <DriverDashboard />;
+      case 'admin':
+      case 'admin-dashboard':
+        return (
+          <AdminDashboard
+            services={services}
+            onRefreshServices={fetchServices}
+          />
+        );
+      case 'privacy':
+        return <PrivacyPage setCurrentTab={handleSetTab} />;
+      case 'terms':
+        return <TermsPage setCurrentTab={handleSetTab} />;
+      default:
+        return <NotFoundPage setCurrentTab={handleSetTab} />;
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-sky-500 selection:text-white font-sans antialiased">
       {/* Real-time Push Toast */}
@@ -88,65 +154,7 @@ const MainAppContent: React.FC = () => {
 
       {/* Main Page Body */}
       <main className="flex-1">
-        {currentTab === 'home' && (
-          <HomePage
-            services={services}
-            setCurrentTab={handleSetTab}
-            onOpenAuth={() => setIsAuthModalOpen(true)}
-          />
-        )}
-
-        {currentTab === 'services' && (
-          <ServicesPage services={services} setCurrentTab={handleSetTab} />
-        )}
-
-        {currentTab === 'about' && (
-          <AboutPage setCurrentTab={handleSetTab} />
-        )}
-
-        {currentTab === 'contact' && (
-          <ContactPage />
-        )}
-
-        {currentTab === 'book' && (
-          <BookPage
-            services={services}
-            setCurrentTab={handleSetTab}
-            onViewOrder={handleTrackOrder}
-          />
-        )}
-
-        {currentTab === 'tracking' && (
-          <TrackingPage
-            initialOrderId={trackingOrderId}
-            setCurrentTab={handleSetTab}
-          />
-        )}
-
-        {/* Customer Portal Tabs */}
-        {currentTab === 'orders' && (
-          <CustomerOrders
-            setCurrentTab={handleSetTab}
-            onTrackOrder={handleTrackOrder}
-          />
-        )}
-
-        {currentTab === 'addresses' && (
-          <CustomerAddresses />
-        )}
-
-        {/* Driver Portal Tab */}
-        {currentTab === 'driver' && (
-          <DriverDashboard />
-        )}
-
-        {/* Admin Portal Tab */}
-        {currentTab === 'admin' && (
-          <AdminDashboard
-            services={services}
-            onRefreshServices={fetchServices}
-          />
-        )}
+        {renderContent()}
       </main>
 
       {/* Global Brand Footer */}

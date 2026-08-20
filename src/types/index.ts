@@ -6,11 +6,14 @@ export interface Profile {
   id: string;
   auth_user_id?: string;
   full_name: string;
+  name?: string;
   email: string;
   phone?: string;
   role: UserRole;
   avatar_url?: string;
   status: UserStatus;
+  vehicle_type?: string;
+  zone?: string;
   created_at: string;
   updated_at: string;
 }
@@ -69,7 +72,7 @@ export type OrderStatus =
 
 export type PaymentStatus =
   | 'pending'
-  | 'processing'
+  | 'verification_required'
   | 'paid'
   | 'failed'
   | 'cancelled'
@@ -179,8 +182,9 @@ export interface BusinessSettings {
   delivery_fee: number;
   currency: string;
   minimum_order_amount: number;
-  mpesa_shortcode: string;
+  mpesa_phone: string;
   mpesa_type: string;
+  mpesa_name: string;
   support_email: string;
   created_at?: string;
   updated_at?: string;
@@ -192,21 +196,11 @@ export interface BookingCartItem {
   notes?: string;
 }
 
-export interface MpesaPaymentRequest {
-  phone: string;
-  amount: number;
+export interface PochiPaymentSubmission {
   orderId: string;
   orderNumber: string;
-  accountReference: string;
-}
-
-export interface MpesaPaymentResponse {
-  success: boolean;
-  checkoutRequestID?: string;
-  merchantRequestID?: string;
-  responseCode?: string;
-  responseDescription?: string;
-  customerMessage?: string;
-  transactionCode?: string;
-  error?: string;
+  amount: number;
+  transactionReference: string;
+  payerPhone?: string;
+  submittedAt: string;
 }

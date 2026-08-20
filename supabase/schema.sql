@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- CLOTHES SPA LAUNDRY (Eldoret, Kenya) - Production Supabase PostgreSQL Schema
--- Location: Hawaii Area, Eldoret, Kenya | Phone: 0741775878
+-- Hub Location: Hawaii Area, Eldoret, Kenya | Phone: 0741775878
 -- ==============================================================================
 
 -- Enable UUID Extension
@@ -14,19 +14,34 @@ CREATE TABLE IF NOT EXISTS profiles (
     email TEXT NOT NULL,
     phone TEXT,
     role TEXT NOT NULL DEFAULT 'customer' CHECK (role IN ('customer', 'driver', 'admin')),
-    avatar_url TEXT,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'suspended')),
+    avatar_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 2. CUSTOMER ADDRESSES TABLE (Eldoret locations)
-CREATE TABLE IF NOT EXISTS customer_addresses (
+-- 2. DRIVERS TABLE (Extended Driver Metadata linked to Profiles)
+CREATE TABLE IF NOT EXISTS drivers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    profile_id UUID UNIQUE NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    vehicle_type TEXT NOT NULL DEFAULT 'Motorbike',
+    vehicle_registration TEXT,
+    zone TEXT DEFAULT 'Hawaii Area & Eldoret',
+    availability_status TEXT NOT NULL DEFAULT 'available' CHECK (availability_status IN ('available', 'busy', 'offline')),
+    current_latitude DOUBLE PRECISION,
+    current_longitude DOUBLE PRECISION,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3. ADDRESSES TABLE (Customer Saved Locations in Eldoret)
+CREATE TABLE IF NOT EXISTS addresses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     customer_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    address TEXT NOT NULL,
-    area TEXT NOT NULL, -- e.g. Hawaii, Elgon View, Annex, Kapsoya, Pioneer, CBD
-    additional_details TEXT,
+    label TEXT NOT NULL DEFAULT 'Home',
+    address_line TEXT NOT NULL,
+    area TEXT NOT NULL, -- e.g. Hawaii Area, Elgon View, Annex, Kapsoya, Pioneer, CBD, Kimumu
+    landmark TEXT,
     latitude DOUBLE PRECISION,
     longitude DOUBLE PRECISION,
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
@@ -34,30 +49,45 @@ CREATE TABLE IF NOT EXISTS customer_addresses (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 3. SERVICES TABLE
+-- Compatibility view for customer_addresses
+CREATE OR REPLACE VIEW customer_addresses AS
+SELECT 
+    id,
+    customer_id,
+    label,
+    address_line AS address,
+    area,
+    landmark AS additional_details,
+    latitude,
+    longitude,
+    is_default,
+    created_at,
+    updated_at
+FROM addresses;
+
+-- 4. SERVICES TABLE
 CREATE TABLE IF NOT EXISTS services (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
-    description TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL CHECK (category IN ('wash_fold', 'wash_iron', 'dry_clean', 'bedding', 'curtains', 'suits', 'shoes', 'special')),
     price_type TEXT NOT NULL CHECK (price_type IN ('per_kg', 'per_item', 'per_pair', 'fixed')),
-    base_price NUMERIC(10, 2) NOT NULL,
-    image_url TEXT NOT NULL,
+    base_price NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    image_url TEXT,
     estimated_duration TEXT NOT NULL DEFAULT '24-48 hours',
     active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 4. ORDERS TABLE
+-- 5. ORDERS TABLE
 CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_number TEXT UNIQUE NOT NULL,
-    customer_id UUID NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
-    pickup_address_id UUID REFERENCES customer_addresses(id) ON DELETE SET NULL,
-    pickup_address_text TEXT NOT NULL,
-    pickup_area TEXT NOT NULL,
-    driver_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+    customer_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+    customer_name TEXT NOT NULL,
+    customer_phone TEXT NOT NULL,
+    customer_email TEXT,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (
         status IN (
             'pending',
@@ -73,96 +103,108 @@ CREATE TABLE IF NOT EXISTS orders (
             'cancelled'
         )
     ),
-    pickup_date DATE NOT NULL,
-    pickup_time TEXT NOT NULL,
-    delivery_date DATE,
-    delivery_time TEXT,
-    subtotal NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
-    delivery_fee NUMERIC(10, 2) NOT NULL DEFAULT 150.00,
-    discount NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
-    total NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
     payment_status TEXT NOT NULL DEFAULT 'pending' CHECK (
         payment_status IN ('pending', 'processing', 'paid', 'failed', 'cancelled', 'refunded')
     ),
     payment_method TEXT NOT NULL DEFAULT 'mpesa' CHECK (
         payment_method IN ('mpesa', 'cash_on_delivery', 'card')
     ),
+    pickup_address_text TEXT NOT NULL,
+    pickup_area TEXT NOT NULL,
+    pickup_latitude DOUBLE PRECISION,
+    pickup_longitude DOUBLE PRECISION,
+    pickup_date DATE NOT NULL,
+    pickup_time TEXT NOT NULL,
+    delivery_address_text TEXT,
+    delivery_area TEXT,
+    delivery_latitude DOUBLE PRECISION,
+    delivery_longitude DOUBLE PRECISION,
+    delivery_date DATE,
+    delivery_time TEXT,
+    subtotal NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    delivery_fee NUMERIC(10, 2) NOT NULL DEFAULT 150.00,
+    discount NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    total NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    driver_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+    driver_name TEXT,
+    driver_phone TEXT,
+    notes TEXT,
     special_instructions TEXT,
-    customer_notes TEXT,
-    admin_notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 5. ORDER ITEMS TABLE
+-- 6. ORDER ITEMS TABLE
 CREATE TABLE IF NOT EXISTS order_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     service_id UUID REFERENCES services(id) ON DELETE SET NULL,
     service_name TEXT NOT NULL,
     quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
-    unit_price NUMERIC(10, 2) NOT NULL,
-    subtotal NUMERIC(10, 2) NOT NULL,
+    unit_price NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    total NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 6. PAYMENTS TABLE (M-Pesa, Cash, Card)
+-- 7. PAYMENTS TABLE
 CREATE TABLE IF NOT EXISTS payments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-    customer_id UUID NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
-    amount NUMERIC(10, 2) NOT NULL,
-    currency TEXT NOT NULL DEFAULT 'KES',
-    payment_method TEXT NOT NULL,
-    transaction_reference TEXT,
+    customer_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+    provider TEXT NOT NULL DEFAULT 'mpesa',
+    amount NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (
-        status IN ('pending', 'processing', 'successful', 'failed', 'cancelled', 'refunded')
+        status IN ('pending', 'processing', 'successful', 'paid', 'failed', 'cancelled', 'refunded')
     ),
+    transaction_reference TEXT,
+    checkout_request_id TEXT,
+    receipt_number TEXT,
     provider_response JSONB,
     paid_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 7. DRIVER ASSIGNMENTS TABLE
+-- 8. DRIVER ASSIGNMENTS TABLE
 CREATE TABLE IF NOT EXISTS driver_assignments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     driver_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
     assigned_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (
-        status IN ('pending', 'accepted', 'declined', 'completed')
+    status TEXT NOT NULL DEFAULT 'assigned' CHECK (
+        status IN ('assigned', 'accepted', 'in_transit', 'completed', 'cancelled')
     ),
     assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     accepted_at TIMESTAMPTZ,
-    completed_at TIMESTAMPTZ
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 8. ORDER STATUS HISTORY TABLE
+-- 9. ORDER STATUS HISTORY TABLE
 CREATE TABLE IF NOT EXISTS order_status_history (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     status TEXT NOT NULL,
     changed_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
     changed_by_name TEXT,
-    notes TEXT,
+    note TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 9. NOTIFICATIONS TABLE
+-- 10. NOTIFICATIONS TABLE
 CREATE TABLE IF NOT EXISTS notifications (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    recipient_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
     order_id UUID REFERENCES orders(id) ON DELETE CASCADE,
-    type TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'order_update',
     title TEXT NOT NULL,
     message TEXT NOT NULL,
     read BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 10. BUSINESS SETTINGS TABLE
+-- 11. BUSINESS SETTINGS TABLE
 CREATE TABLE IF NOT EXISTS business_settings (
     id TEXT PRIMARY KEY DEFAULT 'default',
     business_name TEXT NOT NULL DEFAULT 'Clothes Spa Laundry',
@@ -182,9 +224,12 @@ CREATE TABLE IF NOT EXISTS business_settings (
 -- SEED BUSINESS SETTINGS
 INSERT INTO business_settings (id, business_name, phone, location, opening_hours, delivery_fee, currency, minimum_order_amount, mpesa_shortcode)
 VALUES ('default', 'Clothes Spa Laundry', '0741775878', 'Hawaii Area, Eldoret, Kenya', 'Mon-Sat: 7:00 AM - 8:00 PM | Sun: 9:00 AM - 6:00 PM', 150.00, 'KES', 300.00, '174379')
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+    phone = EXCLUDED.phone,
+    location = EXCLUDED.location,
+    delivery_fee = EXCLUDED.delivery_fee;
 
--- SEED INITIAL SERVICES
+-- SEED INITIAL SERVICES FOR CLOTHES SPA LAUNDRY
 INSERT INTO services (name, description, category, price_type, base_price, image_url, estimated_duration)
 VALUES
 ('Wash, Dry & Fold', 'Everyday clothes thoroughly washed, sanitized with fresh scented fabric conditioner, tumble-dried, and crisply folded.', 'wash_fold', 'per_kg', 150.00, 'https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&w=800&q=80', '24 hours'),
@@ -197,9 +242,48 @@ VALUES
 ('Bed Sheets & Pillowcases (Set)', 'Deep wash, fabric softening, crisp hotel-finish flat-iron pressing for double/queen bed sets.', 'bedding', 'per_item', 300.00, 'https://images.unsplash.com/photo-1631679706909-1844bbd07221?auto=format&fit=crop&w=800&q=80', '24 hours')
 ON CONFLICT DO NOTHING;
 
--- ENABLE ROW LEVEL SECURITY (RLS) ON ALL TABLES
+-- -----------------------------------------------------------------------------
+-- AUTOMATIC PROFILE CREATION TRIGGER FOR AUTH.USERS
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.profiles (
+        auth_user_id,
+        full_name,
+        email,
+        phone,
+        role,
+        status,
+        created_at,
+        updated_at
+    )
+    VALUES (
+        NEW.id,
+        COALESCE(NEW.raw_user_meta_data->>'full_name', SPLIT_PART(NEW.email, '@', 1)),
+        NEW.email,
+        COALESCE(NEW.raw_user_meta_data->>'phone', NULL),
+        COALESCE(NEW.raw_user_meta_data->>'role', 'customer'),
+        'active',
+        NOW(),
+        NOW()
+    )
+    ON CONFLICT (auth_user_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- -----------------------------------------------------------------------------
+-- ROW LEVEL SECURITY (RLS) POLICIES
+-- -----------------------------------------------------------------------------
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE customer_addresses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE drivers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE addresses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE services ENABLE ROW LEVEL SECURITY;
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
@@ -209,76 +293,181 @@ ALTER TABLE order_status_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE business_settings ENABLE ROW LEVEL SECURITY;
 
--- RLS POLICIES
+-- Helper functions for RLS checks
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE auth_user_id = auth.uid() AND role = 'admin'
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Profiles: Users can view their own profile; Admins can view all; Users can update their own profile
-CREATE POLICY "Public profiles are readable by authenticated users" ON profiles
+CREATE OR REPLACE FUNCTION public.get_current_profile_id()
+RETURNS UUID AS $$
+BEGIN
+    RETURN (SELECT id FROM public.profiles WHERE auth_user_id = auth.uid() LIMIT 1);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 1. Profiles RLS
+CREATE POLICY "Profiles readable by owner and admin" ON profiles
+    FOR SELECT USING (
+        auth_user_id = auth.uid()
+        OR public.is_admin()
+        OR role = 'driver'
+    );
+
+CREATE POLICY "Users update own profile" ON profiles
+    FOR UPDATE USING (auth_user_id = auth.uid() OR public.is_admin());
+
+CREATE POLICY "Admin insert/delete profiles" ON profiles
+    FOR ALL USING (public.is_admin());
+
+-- 2. Drivers RLS
+CREATE POLICY "Drivers readable by authenticated" ON drivers
     FOR SELECT USING (auth.role() = 'authenticated');
 
-CREATE POLICY "Users can update own profile" ON profiles
-    FOR UPDATE USING (auth.uid() = auth_user_id);
-
-CREATE POLICY "Admins full access to profiles" ON profiles
+CREATE POLICY "Drivers manageable by admin and owner" ON drivers
     FOR ALL USING (
-        EXISTS (SELECT 1 FROM profiles WHERE auth_user_id = auth.uid() AND role = 'admin')
+        profile_id = public.get_current_profile_id()
+        OR public.is_admin()
     );
 
--- Services: Everyone can read active services; Admins can manage
-CREATE POLICY "Active services are public" ON services
-    FOR SELECT USING (active = TRUE OR EXISTS (SELECT 1 FROM profiles WHERE auth_user_id = auth.uid() AND role = 'admin'));
-
-CREATE POLICY "Admins manage services" ON services
+-- 3. Addresses RLS
+CREATE POLICY "Addresses accessed by owner and admin" ON addresses
     FOR ALL USING (
-        EXISTS (SELECT 1 FROM profiles WHERE auth_user_id = auth.uid() AND role = 'admin')
+        customer_id = public.get_current_profile_id()
+        OR public.is_admin()
     );
 
--- Business Settings: Public read, Admin write
-CREATE POLICY "Business settings readable" ON business_settings
+-- 4. Services RLS
+CREATE POLICY "Services readable by all" ON services
+    FOR SELECT USING (active = TRUE OR public.is_admin());
+
+CREATE POLICY "Services managed by admin" ON services
+    FOR ALL USING (public.is_admin());
+
+-- 5. Business Settings RLS
+CREATE POLICY "Business settings readable by all" ON business_settings
     FOR SELECT USING (TRUE);
 
-CREATE POLICY "Admins manage business settings" ON business_settings
-    FOR ALL USING (
-        EXISTS (SELECT 1 FROM profiles WHERE auth_user_id = auth.uid() AND role = 'admin')
-    );
+CREATE POLICY "Business settings managed by admin" ON business_settings
+    FOR ALL USING (public.is_admin());
 
--- Orders:
--- Customers can view & create their own orders
--- Drivers can view orders assigned to them
--- Admins have full access
+-- 6. Orders RLS
 CREATE POLICY "Customers view own orders" ON orders
     FOR SELECT USING (
-        customer_id IN (SELECT id FROM profiles WHERE auth_user_id = auth.uid())
-        OR driver_id IN (SELECT id FROM profiles WHERE auth_user_id = auth.uid())
-        OR EXISTS (SELECT 1 FROM profiles WHERE auth_user_id = auth.uid() AND role = 'admin')
+        customer_id = public.get_current_profile_id()
+        OR driver_id = public.get_current_profile_id()
+        OR public.is_admin()
     );
 
-CREATE POLICY "Customers create orders" ON orders
+CREATE POLICY "Customers and guests create orders" ON orders
     FOR INSERT WITH CHECK (
-        customer_id IN (SELECT id FROM profiles WHERE auth_user_id = auth.uid())
+        customer_id = public.get_current_profile_id()
+        OR customer_id IS NULL
+        OR public.is_admin()
     );
 
-CREATE POLICY "Admins update any order" ON orders
+CREATE POLICY "Orders updated by admin or assigned driver" ON orders
     FOR UPDATE USING (
-        EXISTS (SELECT 1 FROM profiles WHERE auth_user_id = auth.uid() AND role = 'admin')
-        OR driver_id IN (SELECT id FROM profiles WHERE auth_user_id = auth.uid())
+        public.is_admin()
+        OR driver_id = public.get_current_profile_id()
+        OR (customer_id = public.get_current_profile_id() AND status = 'pending')
     );
 
--- Order Items: Viewable by order owners, drivers, admins
-CREATE POLICY "View order items" ON order_items
+-- 7. Order Items RLS
+CREATE POLICY "Order items viewable by authorized parties" ON order_items
     FOR SELECT USING (
         EXISTS (
             SELECT 1 FROM orders
             WHERE orders.id = order_items.order_id
             AND (
-                orders.customer_id IN (SELECT id FROM profiles WHERE auth_user_id = auth.uid())
-                OR orders.driver_id IN (SELECT id FROM profiles WHERE auth_user_id = auth.uid())
-                OR EXISTS (SELECT 1 FROM profiles WHERE auth_user_id = auth.uid() AND role = 'admin')
+                orders.customer_id = public.get_current_profile_id()
+                OR orders.driver_id = public.get_current_profile_id()
+                OR public.is_admin()
             )
         )
     );
 
--- Realtime Publication setup for orders and notifications
+CREATE POLICY "Order items insertable on order creation" ON order_items
+    FOR INSERT WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM orders
+            WHERE orders.id = order_items.order_id
+            AND (
+                orders.customer_id = public.get_current_profile_id()
+                OR orders.customer_id IS NULL
+                OR public.is_admin()
+            )
+        )
+    );
+
+-- 8. Payments RLS
+CREATE POLICY "Payments viewable by customer and admin" ON payments
+    FOR SELECT USING (
+        customer_id = public.get_current_profile_id()
+        OR public.is_admin()
+    );
+
+CREATE POLICY "Payments insertable during checkout" ON payments
+    FOR INSERT WITH CHECK (
+        customer_id = public.get_current_profile_id()
+        OR customer_id IS NULL
+        OR public.is_admin()
+    );
+
+CREATE POLICY "Payments updatable by admin" ON payments
+    FOR UPDATE USING (public.is_admin());
+
+-- 9. Driver Assignments RLS
+CREATE POLICY "Driver assignments viewable by driver and admin" ON driver_assignments
+    FOR SELECT USING (
+        driver_id = public.get_current_profile_id()
+        OR public.is_admin()
+    );
+
+CREATE POLICY "Driver assignments manageable by admin and assigned driver" ON driver_assignments
+    FOR ALL USING (
+        driver_id = public.get_current_profile_id()
+        OR public.is_admin()
+    );
+
+-- 10. Order Status History RLS
+CREATE POLICY "Status history viewable by order parties" ON order_status_history
+    FOR SELECT USING (
+        EXISTS (
+            SELECT 1 FROM orders
+            WHERE orders.id = order_status_history.order_id
+            AND (
+                orders.customer_id = public.get_current_profile_id()
+                OR orders.driver_id = public.get_current_profile_id()
+                OR public.is_admin()
+            )
+        )
+    );
+
+CREATE POLICY "Status history insertable by admin and driver" ON order_status_history
+    FOR INSERT WITH CHECK (
+        public.is_admin()
+        OR EXISTS (
+            SELECT 1 FROM orders
+            WHERE orders.id = order_status_history.order_id
+            AND orders.driver_id = public.get_current_profile_id()
+        )
+    );
+
+-- 11. Notifications RLS
+CREATE POLICY "Notifications accessed by recipient" ON notifications
+    FOR ALL USING (recipient_id = public.get_current_profile_id() OR public.is_admin());
+
+-- -----------------------------------------------------------------------------
+-- REALTIME PUBLICATION CONFIGURATION
+-- -----------------------------------------------------------------------------
 ALTER PUBLICATION supabase_realtime ADD TABLE orders;
-ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
-ALTER PUBLICATION supabase_realtime ADD TABLE driver_assignments;
 ALTER PUBLICATION supabase_realtime ADD TABLE order_status_history;
+ALTER PUBLICATION supabase_realtime ADD TABLE driver_assignments;
+ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
+ALTER PUBLICATION supabase_realtime ADD TABLE payments;

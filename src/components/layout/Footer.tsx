@@ -132,8 +132,8 @@ export const Footer: React.FC<FooterProps> = ({ setCurrentTab }) => {
               </div>
             </div>
             <div className="pt-2 p-3 bg-slate-900/90 rounded-xl border border-slate-800 text-xs">
-              <span className="text-emerald-400 font-bold">M-Pesa Buy Goods / Till: </span>
-              <span className="font-mono text-white font-bold tracking-wider">174379</span>
+              <span className="text-emerald-400 font-bold">M-Pesa Pochi la Biashara: </span>
+              <span className="font-mono text-white font-bold tracking-wider">0741775878</span>
             </div>
           </div>
         </div>

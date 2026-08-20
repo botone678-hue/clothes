@@ -132,8 +132,9 @@ export const INITIAL_SETTINGS: BusinessSettings = {
   delivery_fee: 150,
   currency: 'KES',
   minimum_order_amount: 300,
-  mpesa_shortcode: '174379',
-  mpesa_type: 'Buy Goods / Till',
+  mpesa_phone: '0741775878',
+  mpesa_type: 'Pochi la Biashara',
+  mpesa_name: 'Clothes Spa Laundry',
   support_email: 'info@clothesspalaundry.co.ke',
 };
 
@@ -147,6 +148,8 @@ export const INITIAL_DRIVERS: Profile[] = [
     role: 'driver',
     status: 'active',
     avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+    vehicle_type: 'Motorcycle KDK 412A',
+    zone: 'Hawaii Area & Eldoret West',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -158,6 +161,8 @@ export const INITIAL_DRIVERS: Profile[] = [
     role: 'driver',
     status: 'active',
     avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80',
+    vehicle_type: 'Express Van KDM 890B',
+    zone: 'Elgon View, Annex & CBD',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -175,18 +180,18 @@ export const INITIAL_ADMIN: Profile = {
   updated_at: new Date().toISOString(),
 };
 
-// Local storage key constants
+// Local cache keys
 const KEYS = {
-  SERVICES: 'csl_services_v1',
-  ORDERS: 'csl_orders_v1',
-  ORDER_ITEMS: 'csl_order_items_v1',
-  PAYMENTS: 'csl_payments_v1',
-  PROFILES: 'csl_profiles_v1',
-  ADDRESSES: 'csl_addresses_v1',
-  ASSIGNMENTS: 'csl_driver_assignments_v1',
-  HISTORY: 'csl_order_history_v1',
-  NOTIFICATIONS: 'csl_notifications_v1',
-  SETTINGS: 'csl_settings_v1',
+  SERVICES: 'csl_services_v2',
+  ORDERS: 'csl_orders_v2',
+  ORDER_ITEMS: 'csl_order_items_v2',
+  PAYMENTS: 'csl_payments_v2',
+  PROFILES: 'csl_profiles_v2',
+  ADDRESSES: 'csl_addresses_v2',
+  ASSIGNMENTS: 'csl_driver_assignments_v2',
+  HISTORY: 'csl_order_history_v2',
+  NOTIFICATIONS: 'csl_notifications_v2',
+  SETTINGS: 'csl_settings_v2',
 };
 
 // Listeners for realtime event broadcasting
@@ -230,7 +235,7 @@ export function emitEvent(channel: StorageChannel, data: any) {
   }
 }
 
-// Helpers to read/write localStorage
+// Helpers to read/write local storage cache
 function getLocal<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -249,31 +254,51 @@ function setLocal<T>(key: string, value: T): void {
   }
 }
 
-// Initialize default storage data if missing
-export function initStorage() {
-  if (!localStorage.getItem(KEYS.SERVICES)) {
-    setLocal(KEYS.SERVICES, INITIAL_SERVICES);
-  }
-  if (!localStorage.getItem(KEYS.SETTINGS)) {
-    setLocal(KEYS.SETTINGS, INITIAL_SETTINGS);
-  }
-  if (!localStorage.getItem(KEYS.PROFILES)) {
-    setLocal(KEYS.PROFILES, [INITIAL_ADMIN, ...INITIAL_DRIVERS]);
-  }
-  if (!localStorage.getItem(KEYS.ORDERS)) {
-    setLocal(KEYS.ORDERS, []);
-  }
-  if (!localStorage.getItem(KEYS.ORDER_ITEMS)) {
-    setLocal(KEYS.ORDER_ITEMS, []);
-  }
-  if (!localStorage.getItem(KEYS.PAYMENTS)) {
-    setLocal(KEYS.PAYMENTS, []);
-  }
-  if (!localStorage.getItem(KEYS.HISTORY)) {
-    setLocal(KEYS.HISTORY, []);
-  }
-  if (!localStorage.getItem(KEYS.NOTIFICATIONS)) {
-    setLocal(KEYS.NOTIFICATIONS, []);
+// Setup Supabase Realtime Subscriptions
+if (isSupabaseConfigured) {
+  try {
+    supabase
+      .channel('clothesspa-realtime-channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        (payload) => {
+          emitEvent('orders', payload.new || payload.old);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'order_status_history' },
+        (payload) => {
+          emitEvent('orders', payload.new);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'driver_assignments' },
+        (payload) => {
+          emitEvent('drivers', payload.new);
+          emitEvent('orders', payload.new);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications' },
+        (payload) => {
+          emitEvent('notifications', payload.new);
+          emitEvent('notification', payload.new);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'payments' },
+        (payload) => {
+          emitEvent('orders', payload.new);
+        }
+      )
+      .subscribe();
+  } catch (err) {
+    console.warn('Could not initialize Supabase Realtime channel:', err);
   }
 }
 
@@ -295,7 +320,7 @@ export const db = {
           return data;
         }
       } catch (e) {
-        console.warn('Supabase fetch services error, fallback to local', e);
+        console.warn('Supabase fetch services warning, using cached catalog', e);
       }
     }
     return getLocal<Service[]>(KEYS.SERVICES, INITIAL_SERVICES);
@@ -304,21 +329,23 @@ export const db = {
   async saveService(service: Partial<Service>): Promise<Service> {
     const services = await db.getServices();
     let saved: Service;
+    const now = new Date().toISOString();
+
     if (service.id) {
       const idx = services.findIndex((s) => s.id === service.id);
       if (idx >= 0) {
         saved = {
           ...services[idx],
           ...service,
-          updated_at: new Date().toISOString(),
+          updated_at: now,
         } as Service;
         services[idx] = saved;
       } else {
         saved = {
           ...service,
-          id: service.id || `srv-${Date.now()}`,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          id: service.id,
+          created_at: now,
+          updated_at: now,
         } as Service;
         services.push(saved);
       }
@@ -333,8 +360,8 @@ export const db = {
         image_url: service.image_url || 'https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&w=800&q=80',
         estimated_duration: service.estimated_duration || '24 hours',
         active: service.active ?? true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: now,
+        updated_at: now,
       };
       services.push(saved);
     }
@@ -351,6 +378,10 @@ export const db = {
 
     emitEvent('services', services);
     return saved;
+  },
+
+  async createService(service: Partial<Service>): Promise<Service> {
+    return db.saveService(service);
   },
 
   async deleteService(id: string): Promise<boolean> {
@@ -371,26 +402,28 @@ export const db = {
 
   // --- ORDERS ---
   async getOrders(filter?: { customerId?: string; driverId?: string; status?: OrderStatus }): Promise<Order[]> {
-    let orders: Order[] = [];
     if (isSupabaseConfigured) {
       try {
-        let query = supabase.from('orders').select('*, items:order_items(*)').order('created_at', { ascending: false });
+        let query = supabase
+          .from('orders')
+          .select('*, items:order_items(*)')
+          .order('created_at', { ascending: false });
+
         if (filter?.customerId) query = query.eq('customer_id', filter.customerId);
         if (filter?.driverId) query = query.eq('driver_id', filter.driverId);
         if (filter?.status) query = query.eq('status', filter.status);
 
         const { data, error } = await query;
         if (!error && data) {
-          orders = data;
-          setLocal(KEYS.ORDERS, orders);
-          return orders;
+          setLocal(KEYS.ORDERS, data);
+          return data as Order[];
         }
       } catch (e) {
-        console.warn('Supabase fetch orders fallback to local', e);
+        console.warn('Supabase fetch orders fallback', e);
       }
     }
 
-    orders = getLocal<Order[]>(KEYS.ORDERS, []);
+    let orders = getLocal<Order[]>(KEYS.ORDERS, []);
     const items = getLocal<OrderItem[]>(KEYS.ORDER_ITEMS, []);
 
     orders = orders.map((ord) => ({
@@ -412,8 +445,23 @@ export const db = {
   },
 
   async getOrderById(id: string): Promise<Order | null> {
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*, items:order_items(*)')
+          .or(`id.eq.${id},order_number.eq.${id}`)
+          .single();
+        if (!error && data) {
+          return data as Order;
+        }
+      } catch (e) {
+        console.warn('Supabase getOrderById error', e);
+      }
+    }
+
     const orders = await db.getOrders();
-    return orders.find((o) => o.id === id || o.order_number === id) || null;
+    return orders.find((o) => o.id === id || o.order_number.toLowerCase() === id.toLowerCase()) || null;
   },
 
   async createOrder(params: {
@@ -439,7 +487,7 @@ export const db = {
     const subtotal = params.items.reduce((sum, item) => sum + item.service.base_price * item.quantity, 0);
     const total = subtotal + deliveryFee;
 
-    const orderId = `ord-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+    const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const orderNumber = generateOrderNumber();
     const now = new Date().toISOString();
 
@@ -496,7 +544,7 @@ export const db = {
       updated_at: now,
     };
 
-    // Save locally
+    // Save locally to cache
     const existingOrders = getLocal<Order[]>(KEYS.ORDERS, []);
     setLocal(KEYS.ORDERS, [newOrder, ...existingOrders]);
 
@@ -509,7 +557,7 @@ export const db = {
     // Initial Status History
     await db.addStatusHistory(orderId, 'pending', params.customerId, params.customerName, 'Order placed by customer');
 
-    // Add Notifications for Customer and Admin
+    // Add Notification for Customer
     await db.createNotification({
       user_id: params.customerId,
       order_id: orderId,
@@ -518,7 +566,7 @@ export const db = {
       message: `Your laundry order #${orderNumber} has been received. Our team will arrange pickup in ${params.pickupArea}.`,
     });
 
-    // Notify all admin profiles
+    // Notify Admins
     const profiles = await db.getProfiles();
     const admins = profiles.filter((p) => p.role === 'admin');
     for (const admin of admins) {
@@ -536,7 +584,10 @@ export const db = {
         await supabase.from('orders').insert({
           id: newOrder.id,
           order_number: newOrder.order_number,
-          customer_id: newOrder.customer_id,
+          customer_id: newOrder.customer_id.startsWith('cust-') ? null : newOrder.customer_id,
+          customer_name: newOrder.customer_name,
+          customer_phone: newOrder.customer_phone,
+          customer_email: newOrder.customer_email,
           pickup_address_text: newOrder.pickup_address_text,
           pickup_area: newOrder.pickup_area,
           status: newOrder.status,
@@ -557,11 +608,11 @@ export const db = {
           newOrderItems.map((it) => ({
             id: it.id,
             order_id: it.order_id,
-            service_id: it.service_id,
+            service_id: it.service_id?.startsWith('srv-') ? null : it.service_id,
             service_name: it.service_name,
             quantity: it.quantity,
             unit_price: it.unit_price,
-            subtotal: it.subtotal,
+            total: it.subtotal,
             notes: it.notes,
           }))
         );
@@ -569,10 +620,9 @@ export const db = {
         await supabase.from('payments').insert({
           id: newPayment.id,
           order_id: newPayment.order_id,
-          customer_id: newPayment.customer_id,
+          customer_id: newPayment.customer_id.startsWith('cust-') ? null : newPayment.customer_id,
+          provider: newPayment.payment_method,
           amount: newPayment.amount,
-          currency: newPayment.currency,
-          payment_method: newPayment.payment_method,
           status: newPayment.status,
         });
       } catch (e) {
@@ -614,7 +664,7 @@ export const db = {
       confirmed: { title: 'Order Confirmed', msg: `Order #${updatedOrder.order_number} has been confirmed by Clothes Spa.` },
       driver_assigned: {
         title: 'Driver Assigned',
-        msg: `Driver ${updatedOrder.driver_name || 'Kipchoge'} has been assigned to pick up your laundry.`,
+        msg: `Driver ${updatedOrder.driver_name || 'Assigned Driver'} will pick up your laundry.`,
       },
       pickup_scheduled: {
         title: 'Pickup Scheduled',
@@ -677,22 +727,6 @@ export const db = {
 
     emitEvent('orders', updatedOrder);
     return updatedOrder;
-  },
-
-  async createService(service: Partial<Service>): Promise<Service> {
-    return db.saveService(service);
-  },
-
-  async createDriver(driver: { name: string; phone: string; vehicle_type?: string; zone?: string }): Promise<Profile> {
-    const saved = await db.saveProfile({
-      full_name: driver.name,
-      phone: driver.phone,
-      email: `${driver.name.toLowerCase().replace(/\s+/g, '.')}@clothesspa.co.ke`,
-      role: 'driver',
-      status: 'active',
-    });
-    emitEvent('drivers', saved);
-    return saved;
   },
 
   async assignDriver(orderId: string, driverId: string, assignedByName?: string, driverPhone?: string): Promise<Order | null> {
@@ -760,10 +794,18 @@ export const db = {
           .from('orders')
           .update({
             driver_id: driver.id,
+            driver_name: driver.full_name,
+            driver_phone: driverPhone || driver.phone,
             status: 'driver_assigned',
             updated_at: new Date().toISOString(),
           })
           .eq('id', orderId);
+
+        await supabase.from('driver_assignments').insert({
+          order_id: orderId,
+          driver_id: driver.id,
+          status: 'assigned',
+        });
       } catch (e) {
         console.error('Supabase assign driver error', e);
       }
@@ -773,8 +815,35 @@ export const db = {
     return updatedOrder;
   },
 
+  async createDriver(driver: { name: string; phone: string; vehicle_type?: string; zone?: string }): Promise<Profile> {
+    const saved = await db.saveProfile({
+      full_name: driver.name,
+      phone: driver.phone,
+      email: `${driver.name.toLowerCase().replace(/\s+/g, '.')}@clothesspa.co.ke`,
+      role: 'driver',
+      status: 'active',
+      vehicle_type: driver.vehicle_type,
+      zone: driver.zone,
+    });
+    emitEvent('drivers', saved);
+    return saved;
+  },
+
   // --- PAYMENTS ---
   async getPayments(customerId?: string): Promise<Payment[]> {
+    if (isSupabaseConfigured) {
+      try {
+        let query = supabase.from('payments').select('*').order('created_at', { ascending: false });
+        if (customerId) query = query.eq('customer_id', customerId);
+        const { data, error } = await query;
+        if (!error && data) {
+          setLocal(KEYS.PAYMENTS, data);
+          return data as Payment[];
+        }
+      } catch (e) {
+        console.warn('Supabase fetch payments fallback', e);
+      }
+    }
     let payments = getLocal<Payment[]>(KEYS.PAYMENTS, []);
     if (customerId) {
       payments = payments.filter((p) => p.customer_id === customerId);
@@ -820,8 +889,24 @@ export const db = {
         user_id: updatedPayment.customer_id,
         order_id: orderId,
         type: 'payment_successful',
-        title: 'Payment Received via M-Pesa',
-        message: `M-Pesa payment of KES ${updatedPayment.amount.toLocaleString()} confirmed (Ref: ${reference || 'CSL-MPESA'}).`,
+        title: 'Payment Verified & Confirmed',
+        message: `M-Pesa Pochi payment of KES ${updatedPayment.amount.toLocaleString()} has been verified and confirmed (Ref: ${reference || updatedPayment.transaction_reference || 'N/A'}).`,
+      });
+    } else if (status === 'verification_required') {
+      await db.createNotification({
+        user_id: updatedPayment.customer_id,
+        order_id: orderId,
+        type: 'payment_verification',
+        title: 'Payment Reference Submitted',
+        message: `Your M-Pesa reference (${reference || 'Submitted'}) has been received. Our accounts team will verify with 0741775878.`,
+      });
+    } else if (status === 'failed') {
+      await db.createNotification({
+        user_id: updatedPayment.customer_id,
+        order_id: orderId,
+        type: 'payment_failed',
+        title: 'Payment Verification Unsuccessful',
+        message: `The payment reference provided could not be verified. Please check and submit a valid M-Pesa SMS code or contact 0741775878.`,
       });
     }
 
@@ -854,6 +939,20 @@ export const db = {
 
   // --- ORDER STATUS HISTORY ---
   async getStatusHistory(orderId: string): Promise<OrderStatusHistory[]> {
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase
+          .from('order_status_history')
+          .select('*')
+          .eq('order_id', orderId)
+          .order('created_at', { ascending: true });
+        if (!error && data) {
+          return data as OrderStatusHistory[];
+        }
+      } catch (e) {
+        console.warn('Supabase getStatusHistory fallback', e);
+      }
+    }
     const all = getLocal<OrderStatusHistory[]>(KEYS.HISTORY, []);
     return all.filter((h) => h.order_id === orderId).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
   },
@@ -861,7 +960,7 @@ export const db = {
   async addStatusHistory(orderId: string, status: OrderStatus, changedById?: string, changedByName?: string, notes?: string) {
     const all = getLocal<OrderStatusHistory[]>(KEYS.HISTORY, []);
     const entry: OrderStatusHistory = {
-      id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: `hist-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       order_id: orderId,
       status,
       changed_by: changedById,
@@ -878,9 +977,9 @@ export const db = {
           id: entry.id,
           order_id: entry.order_id,
           status: entry.status,
-          changed_by: entry.changed_by,
+          changed_by: entry.changed_by?.startsWith('cust-') || entry.changed_by?.startsWith('drv-') || entry.changed_by?.startsWith('admin-') ? null : entry.changed_by,
           changed_by_name: entry.changed_by_name,
-          notes: entry.notes,
+          note: entry.notes,
         });
       } catch (e) {
         console.error('Supabase add history error', e);
@@ -890,6 +989,17 @@ export const db = {
 
   // --- PROFILES / DRIVERS / CUSTOMERS ---
   async getProfiles(): Promise<Profile[]> {
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.from('profiles').select('*');
+        if (!error && data && data.length > 0) {
+          setLocal(KEYS.PROFILES, data);
+          return data as Profile[];
+        }
+      } catch (e) {
+        console.warn('Supabase getProfiles fallback', e);
+      }
+    }
     return getLocal<Profile[]>(KEYS.PROFILES, [INITIAL_ADMIN, ...INITIAL_DRIVERS]);
   },
 
@@ -906,13 +1016,14 @@ export const db = {
   async saveProfile(profile: Partial<Profile>): Promise<Profile> {
     const profiles = await db.getProfiles();
     let saved: Profile;
+    const now = new Date().toISOString();
     const idx = profiles.findIndex((p) => p.id === profile.id || (p.email && p.email === profile.email));
 
     if (idx >= 0) {
       saved = {
         ...profiles[idx],
         ...profile,
-        updated_at: new Date().toISOString(),
+        updated_at: now,
       } as Profile;
       profiles[idx] = saved;
     } else {
@@ -923,19 +1034,53 @@ export const db = {
         phone: profile.phone || '',
         role: profile.role || 'customer',
         status: 'active',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: now,
+        updated_at: now,
         ...profile,
       } as Profile;
       profiles.push(saved);
     }
 
     setLocal(KEYS.PROFILES, profiles);
+
+    if (isSupabaseConfigured) {
+      try {
+        await supabase.from('profiles').upsert(saved);
+      } catch (e) {
+        console.error('Supabase save profile error', e);
+      }
+    }
+
     return saved;
   },
 
   // --- CUSTOMER ADDRESSES ---
   async getAddresses(customerId: string): Promise<CustomerAddress[]> {
+    if (isSupabaseConfigured && !customerId.startsWith('cust-')) {
+      try {
+        const { data, error } = await supabase
+          .from('addresses')
+          .select('*')
+          .eq('customer_id', customerId)
+          .order('is_default', { ascending: false });
+        if (!error && data) {
+          return data.map((d: any) => ({
+            id: d.id,
+            customer_id: d.customer_id,
+            address: d.address_line || d.address,
+            area: d.area,
+            additional_details: d.landmark || d.additional_details,
+            latitude: d.latitude,
+            longitude: d.longitude,
+            is_default: d.is_default,
+            created_at: d.created_at,
+            updated_at: d.updated_at,
+          }));
+        }
+      } catch (e) {
+        console.warn('Supabase getAddresses fallback', e);
+      }
+    }
     const all = getLocal<CustomerAddress[]>(KEYS.ADDRESSES, []);
     return all.filter((a) => a.customer_id === customerId);
   },
@@ -943,6 +1088,7 @@ export const db = {
   async saveAddress(address: Partial<CustomerAddress>): Promise<CustomerAddress> {
     const all = getLocal<CustomerAddress[]>(KEYS.ADDRESSES, []);
     let saved: CustomerAddress;
+    const now = new Date().toISOString();
 
     if (address.is_default) {
       all.forEach((a) => {
@@ -953,10 +1099,10 @@ export const db = {
     if (address.id) {
       const idx = all.findIndex((a) => a.id === address.id);
       if (idx >= 0) {
-        saved = { ...all[idx], ...address, updated_at: new Date().toISOString() } as CustomerAddress;
+        saved = { ...all[idx], ...address, updated_at: now } as CustomerAddress;
         all[idx] = saved;
       } else {
-        saved = { ...address, id: address.id, created_at: new Date().toISOString(), updated_at: new Date().toISOString() } as CustomerAddress;
+        saved = { ...address, id: address.id, created_at: now, updated_at: now } as CustomerAddress;
         all.push(saved);
       }
     } else {
@@ -964,21 +1110,60 @@ export const db = {
         id: `addr-${Date.now()}`,
         customer_id: address.customer_id!,
         address: address.address || '',
-        area: address.area || 'Hawaii',
+        area: address.area || 'Hawaii Area',
         additional_details: address.additional_details || '',
         is_default: address.is_default ?? true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: now,
+        updated_at: now,
       };
       all.push(saved);
     }
 
     setLocal(KEYS.ADDRESSES, all);
+
+    if (isSupabaseConfigured && address.customer_id && !address.customer_id.startsWith('cust-')) {
+      try {
+        await supabase.from('addresses').upsert({
+          id: saved.id.startsWith('addr-') ? undefined : saved.id,
+          customer_id: saved.customer_id,
+          address_line: saved.address,
+          area: saved.area,
+          landmark: saved.additional_details,
+          is_default: saved.is_default,
+        });
+      } catch (e) {
+        console.error('Supabase save address error', e);
+      }
+    }
+
     return saved;
   },
 
   // --- NOTIFICATIONS ---
   async getNotifications(userId: string): Promise<Notification[]> {
+    if (isSupabaseConfigured && !userId.startsWith('cust-') && !userId.startsWith('drv-') && !userId.startsWith('admin-')) {
+      try {
+        const { data, error } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('recipient_id', userId)
+          .order('created_at', { ascending: false });
+        if (!error && data) {
+          return data.map((n: any) => ({
+            id: n.id,
+            user_id: n.recipient_id || n.user_id,
+            order_id: n.order_id,
+            type: n.type,
+            title: n.title,
+            message: n.message,
+            read: n.read,
+            created_at: n.created_at,
+          }));
+        }
+      } catch (e) {
+        console.warn('Supabase getNotifications fallback', e);
+      }
+    }
     const all = getLocal<Notification[]>(KEYS.NOTIFICATIONS, []);
     return all.filter((n) => n.user_id === userId).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   },
@@ -987,13 +1172,29 @@ export const db = {
     const all = getLocal<Notification[]>(KEYS.NOTIFICATIONS, []);
     const newNotif: Notification = {
       ...notif,
-      id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       read: false,
       created_at: new Date().toISOString(),
     };
     all.unshift(newNotif);
     setLocal(KEYS.NOTIFICATIONS, all);
     emitEvent('notifications', newNotif);
+
+    if (isSupabaseConfigured && notif.user_id && !notif.user_id.startsWith('cust-') && !notif.user_id.startsWith('drv-') && !notif.user_id.startsWith('admin-')) {
+      try {
+        await supabase.from('notifications').insert({
+          recipient_id: notif.user_id,
+          order_id: notif.order_id,
+          type: notif.type,
+          title: notif.title,
+          message: notif.message,
+          read: false,
+        });
+      } catch (e) {
+        console.error('Supabase createNotification error', e);
+      }
+    }
+
     return newNotif;
   },
 
@@ -1003,6 +1204,14 @@ export const db = {
     if (idx >= 0) {
       all[idx].read = true;
       setLocal(KEYS.NOTIFICATIONS, all);
+    }
+
+    if (isSupabaseConfigured && !id.startsWith('notif-')) {
+      try {
+        await supabase.from('notifications').update({ read: true }).eq('id', id);
+      } catch (e) {
+        console.error('Supabase markNotificationRead error', e);
+      }
     }
   },
 
@@ -1016,7 +1225,7 @@ export const db = {
           return data;
         }
       } catch (e) {
-        console.warn('Supabase get settings error, fallback', e);
+        console.warn('Supabase get settings fallback', e);
       }
     }
     return getLocal<BusinessSettings>(KEYS.SETTINGS, INITIAL_SETTINGS);
@@ -1043,6 +1252,3 @@ export const db = {
     return updated;
   },
 };
-
-// Auto initialize on module load
-initStorage();

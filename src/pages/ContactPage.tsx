@@ -75,9 +75,9 @@ export const ContactPage: React.FC = () => {
             </div>
 
             <div className="p-4 bg-white/10 backdrop-blur-md rounded-2xl border border-white/10 text-xs">
-              <span className="font-bold text-amber-300">M-Pesa Official Till:</span> 174379
+              <span className="font-bold text-amber-300">M-Pesa Pochi la Biashara:</span> 0741775878
               <br />
-              <span className="text-slate-300 text-[11px]">Instant automated receipt generation upon payment.</span>
+              <span className="text-slate-300 text-[11px]">Clothes Spa Laundry official verified business payment number.</span>
             </div>
           </div>
         </div>
