@@ -370,9 +370,11 @@ export const db = {
 
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('services').upsert(saved);
+        const { error } = await supabase.from('services').upsert(saved);
+        if (error) throw new Error(`Service save failed: ${error.message}`);
       } catch (e) {
         console.error('Supabase save service error', e);
+        throw e;
       }
     }
 
@@ -854,9 +856,11 @@ export const db = {
     reference?: string,
     providerResponse?: any
   ): Promise<Payment | null> {
-    const payments = getLocal<Payment[]>(KEYS.PAYMENTS, []);
+    // Always hydrate payments from Supabase first. The admin may be on a different
+    // phone/browser and therefore have no local payment cache.
+    const payments = await db.getPayments();
     const idx = payments.findIndex((p) => p.order_id === orderId);
-    if (idx < 0) return null;
+    if (idx < 0) throw new Error(`Payment record not found for order ${orderId}`);
 
     const now = new Date().toISOString();
     const updatedPayment: Payment = {
@@ -909,11 +913,14 @@ export const db = {
 
     if (isSupabaseConfigured) {
       try {
-        const paymentUpdate = await supabase.from('payments').update({ status, transaction_reference: updatedPayment.transaction_reference, paid_at: updatedPayment.paid_at, updated_at: now }).eq('order_id', orderId); if (paymentUpdate.error) throw paymentUpdate.error;
+        const paymentUpdate = await supabase.from('payments').update({ status, transaction_reference: updatedPayment.transaction_reference, paid_at: updatedPayment.paid_at, updated_at: now }).eq('order_id', orderId);
+        if (paymentUpdate.error) throw new Error(`Payment update failed: ${paymentUpdate.error.message}`);
 
-        const orderPaymentUpdate = await supabase.from('orders').update({ payment_status: status, updated_at: now }).eq('id', orderId); if (orderPaymentUpdate.error) throw orderPaymentUpdate.error;
+        const orderPaymentUpdate = await supabase.from('orders').update({ payment_status: status, updated_at: now }).eq('id', orderId);
+        if (orderPaymentUpdate.error) throw new Error(`Order payment status update failed: ${orderPaymentUpdate.error.message}`);
       } catch (e) {
         console.error('Supabase update payment error', e);
+        throw e;
       }
     }
 
@@ -1028,9 +1035,11 @@ export const db = {
 
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('profiles').upsert(saved);
+        const { error } = await supabase.from('profiles').upsert(saved);
+        if (error) throw new Error(`Driver profile save failed: ${error.message}`);
       } catch (e) {
         console.error('Supabase save profile error', e);
+        throw e;
       }
     }
 
