@@ -1,127 +1,41 @@
-name: Fix admin dashboard actions
-
+name: Patch admin actions
 on:
   push:
     branches: [main]
-
 permissions:
   contents: write
-
 jobs:
   patch:
-    if: "!contains(github.event.head_commit.message, 'fix admin dashboard actions')"
+    if: "!contains(github.event.head_commit.message, 'admin action patch applied')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch admin handlers
-        shell: python
+      - name: Patch action handlers
         run: |
+          python3 - <<'PY'
           from pathlib import Path
-          import re
-          p = Path('src/pages/admin/AdminDashboard.tsx')
-          s = p.read_text()
-          old = r"  const handleStatusChange = async \(newStatus: OrderStatus\).*?  const handleCreateDriver = async \(e: React.FormEvent\) => \{.*?void loadData\(\); \};"
-          new = '''  const reportAdminActionError = (action: string, error: unknown) => {
-    console.error(`[Admin] ${action} failed`, error);
-    const message = error instanceof Error ? error.message : String(error);
-    window.alert(`${action} failed.\\n\\n${message}`);
-  };
-
-  const handleStatusChange = async (newStatus: OrderStatus) => {
-    if (!selectedOrder || isUpdatingOrder) return;
-    const orderId = selectedOrder.id;
-    setIsUpdatingOrder(true);
-    try {
-      const updated = await db.updateOrderStatus(orderId, newStatus, user?.id || 'admin', user?.full_name || 'Admin', `Status changed by Admin to ${newStatus}`);
-      if (!updated) throw new Error('The order could not be updated.');
-      await loadData();
-      setSelectedOrder(updated);
-    } catch (error) {
-      reportAdminActionError('Order status update', error);
-    } finally {
-      setIsUpdatingOrder(false);
-    }
-  };
-
-  const handleAssignDriver = async (driverId: string) => {
-    if (!selectedOrder || !driverId || isUpdatingOrder) return;
-    const driver = drivers.find((d) => d.id === driverId);
-    if (!driver) return reportAdminActionError('Driver assignment', new Error('Selected driver was not found.'));
-    const orderId = selectedOrder.id;
-    setIsUpdatingOrder(true);
-    try {
-      const updated = await db.assignDriver(orderId, driver.id, user?.full_name || 'Admin', driver.phone);
-      if (!updated) throw new Error('The driver assignment did not return an updated order.');
-      await loadData();
-      setSelectedOrder(updated);
-    } catch (error) {
-      reportAdminActionError('Driver assignment', error);
-    } finally {
-      setIsUpdatingOrder(false);
-    }
-  };
-
-  const handlePaymentToggle = async (newPaymentStatus: PaymentStatus) => {
-    if (!selectedOrder || isUpdatingOrder) return;
-    const orderId = selectedOrder.id;
-    setIsUpdatingOrder(true);
-    try {
-      await db.updatePaymentStatus(orderId, newPaymentStatus);
-      await loadData();
-      const refreshed = (await db.getOrders()).find((o) => o.id === orderId);
-      if (refreshed) setSelectedOrder(refreshed);
-    } catch (error) {
-      reportAdminActionError('Payment status update', error);
-    } finally {
-      setIsUpdatingOrder(false);
-    }
-  };
-
-  const handleDirectPaymentAction = async (orderId: string, newStatus: PaymentStatus) => {
-    if (isUpdatingOrder) return;
-    setIsUpdatingOrder(true);
-    try {
-      await db.updatePaymentStatus(orderId, newStatus);
-      const updated = await db.getOrders();
-      setOrders(updated);
-      const refreshed = updated.find((o) => o.id === orderId);
-      if (selectedOrder?.id === orderId && refreshed) setSelectedOrder(refreshed);
-    } catch (error) {
-      reportAdminActionError('Payment verification', error);
-    } finally {
-      setIsUpdatingOrder(false);
-    }
-  };
-
-  const handleCreateService = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newServiceName.trim() || isAddingService) return;
-    try {
-      await db.createService({ name: newServiceName.trim(), category: newServiceCategory, price_type: newServiceType, base_price: Number(newServicePrice), estimated_duration: newServiceDuration, description: newServiceDesc, image_url: 'https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&w=800&q=80' });
-      setIsAddingService(false); setNewServiceName(''); setNewServiceDesc(''); onRefreshServices();
-    } catch (error) { reportAdminActionError('Create service', error); }
-  };
-
-  const handleCreateDriver = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newDriverName.trim() || !newDriverPhone.trim() || isAddingDriver) return;
-    try {
-      await db.createDriver({ name: newDriverName.trim(), phone: newDriverPhone.trim(), vehicle_type: newDriverVehicle, zone: 'Hawaii Area & Eldoret' });
-      setIsAddingDriver(false); setNewDriverName(''); setNewDriverPhone(''); await loadData();
-    } catch (error) { reportAdminActionError('Create driver', error); }
-  };'''
-          s2, n = re.subn(old, new, s, count=1, flags=re.S)
-          if n != 1:
-            raise SystemExit(f'handler replacement count={n}')
-          s = s2
-          s = s.replace("onClick={() => setSelectedOrder(ord)} className=\"px-3 py-1.5 bg-slate-900", "onClick={(e) => { e.stopPropagation(); setSelectedOrder(ord); }} className=\"px-3 py-1.5 bg-slate-900", 1)
+          p=Path('src/pages/admin/AdminDashboard.tsx')
+          s=p.read_text()
+          s=s.replace("const handleStatusChange = async (newStatus: OrderStatus) => { if (!selectedOrder) return; setIsUpdatingOrder(true); await db.updateOrderStatus(selectedOrder.id, newStatus, user?.id || 'admin', user?.full_name || 'Admin', `Status changed by Admin to ${newStatus}`); const updated = await db.getOrders(); setOrders(updated); const refreshed = updated.find((o) => o.id === selectedOrder.id); if (refreshed) setSelectedOrder(refreshed); setIsUpdatingOrder(false); };", "const handleStatusChange = async (newStatus: OrderStatus) => { if (!selectedOrder || isUpdatingOrder) return; setIsUpdatingOrder(true); try { await db.updateOrderStatus(selectedOrder.id, newStatus, user?.id || 'admin', user?.full_name || 'Admin', `Status changed by Admin to ${newStatus}`); await loadData(); const refreshed = (await db.getOrders()).find((o) => o.id === selectedOrder.id); if (refreshed) setSelectedOrder(refreshed); } catch (error) { console.error('Admin status update failed', error); window.alert(error instanceof Error ? error.message : String(error)); } finally { setIsUpdatingOrder(false); } };")
+          s=s.replace("const handleCreateService = async (e: React.FormEvent) => { e.preventDefault(); await db.createService({ name: newServiceName, category: newServiceCategory, price_type: newServiceType, base_price: Number(newServicePrice), estimated_duration: newServiceDuration, description: newServiceDesc, image_url: 'https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&w=800&q=80' }); setIsAddingService(false); setNewServiceName(''); setNewServiceDesc(''); onRefreshServices(); };", "const handleCreateService = async (e: React.FormEvent) => { e.preventDefault(); if (!newServiceName.trim() || isAddingService) return; try { setIsAddingService(true); await db.createService({ name: newServiceName.trim(), category: newServiceCategory, price_type: newServiceType, base_price: Number(newServicePrice), estimated_duration: newServiceDuration, description: newServiceDesc, image_url: 'https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&w=800&q=80' }); setNewServiceName(''); setNewServiceDesc(''); await onRefreshServices(); } catch (error) { console.error('Admin service creation failed', error); window.alert(error instanceof Error ? error.message : String(error)); } finally { setIsAddingService(false); } };")
           p.write_text(s)
-      - name: Commit and remove temporary workflow
+          PY
+      - name: Patch storage errors
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/lib/storage.ts')
+          s=p.read_text()
+          s=s.replace("await supabase\n          .from('orders')\n          .update({\n            status: newStatus,\n            updated_at: new Date().toISOString(),\n          })\n          .eq('id', orderId);", "const { error } = await supabase.from('orders').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', orderId); if (error) throw error;")
+          s=s.replace("await supabase\n          .from('payments')\n          .update({\n            status,\n            transaction_reference: updatedPayment.transaction_reference,\n            paid_at: updatedPayment.paid_at,\n            updated_at: now,\n          })\n          .eq('order_id', orderId);", "const paymentUpdate = await supabase.from('payments').update({ status, transaction_reference: updatedPayment.transaction_reference, paid_at: updatedPayment.paid_at, updated_at: now }).eq('order_id', orderId); if (paymentUpdate.error) throw paymentUpdate.error;")
+          s=s.replace("await supabase\n          .from('orders')\n          .update({\n            payment_status: status,\n            updated_at: now,\n          })\n          .eq('id', orderId);", "const orderPaymentUpdate = await supabase.from('orders').update({ payment_status: status, updated_at: now }).eq('id', orderId); if (orderPaymentUpdate.error) throw orderPaymentUpdate.error;")
+          p.write_text(s)
+          PY
+      - name: Commit patch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/pages/admin/AdminDashboard.tsx .github/workflows/fix-admin-dashboard-actions.yml
-          git commit -m "fix admin dashboard actions" || exit 0
-          git rm .github/workflows/fix-admin-dashboard-actions.yml
-          git commit -m "remove temporary admin dashboard patch workflow"
+          git add src/pages/admin/AdminDashboard.tsx src/lib/storage.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "admin action patch applied"
           git push origin main
