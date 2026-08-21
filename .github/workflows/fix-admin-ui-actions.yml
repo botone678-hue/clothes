@@ -10,53 +10,63 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch AdminDashboard action wiring
+      - name: Patch AdminDashboard and storage action wiring
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
+          # ---- Admin UI ----
           p = Path('src/pages/admin/AdminDashboard.tsx')
           s = p.read_text()
 
-          # Make the existing Manage control a hard UI event handler.
           s = s.replace(
             'onClick={() => setSelectedOrder(ord)} className="px-3 py-1.5 bg-slate-900',
             'type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedOrder(ord); }} onPointerDown={(e) => { e.stopPropagation(); }} className="px-3 py-1.5 bg-slate-900'
           )
-
-          # Make the payment Details control explicit button type and event-safe.
           s = s.replace(
             '<button onClick={() => setSelectedOrder(ord)} className="px-2.5 py-1.5 bg-slate-900',
-            '<button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedOrder(ord); }} className="px-2.5 py-1.5 bg-slate-900'
+            '<button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedOrder(ord); }} onPointerDown={(e) => { e.stopPropagation(); }} className="px-2.5 py-1.5 bg-slate-900'
           )
-
-          # Ensure existing tab/action buttons are not interpreted as implicit submits.
           s = s.replace('<button onClick=', '<button type="button" onClick=')
           s = s.replace('<button disabled=', '<button type="button" disabled=')
 
-          # Add a real Add Service modal. The existing button already sets isAddingService=true.
-          service_marker = '{selectedOrder && <div className="fixed inset-0 z-50'
-          if 'isAddingService &&' not in s:
-            service_modal = '''{isAddingService && <div className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4"><form onSubmit={handleCreateService} className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 p-6 space-y-5"><div className="flex items-center justify-between"><div><span className="text-xs font-bold uppercase text-sky-700">Services & Pricing</span><h3 className="text-xl font-black text-slate-900">Add Service</h3></div><button type="button" onClick={() => setIsAddingService(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400"><X className="w-5 h-5" /></button></div><div className="space-y-3"><input required value={newServiceName} onChange={(e) => setNewServiceName(e.target.value)} placeholder="Service name" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" /><select value={newServiceCategory} onChange={(e) => setNewServiceCategory(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm"><option value="wash_fold">Wash & Fold</option><option value="wash_press">Wash & Press</option><option value="dry_cleaning">Dry Cleaning</option><option value="specialty">Specialty Care</option></select><div className="grid grid-cols-2 gap-3"><input type="number" min="0" value={newServicePrice} onChange={(e) => setNewServicePrice(Number(e.target.value))} placeholder="Price" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm" /><select value={newServiceType} onChange={(e) => setNewServiceType(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm"><option value="per_item">Per Item</option><option value="per_kg">Per Kg</option><option value="per_pair">Per Pair</option><option value="flat">Flat</option></select></div><input value={newServiceDuration} onChange={(e) => setNewServiceDuration(e.target.value)} placeholder="Turnaround" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm" /><textarea value={newServiceDesc} onChange={(e) => setNewServiceDesc(e.target.value)} placeholder="Description" rows={3} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm resize-none" /></div><div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddingService(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold">Cancel</button><button type="submit" disabled={isAddingService} className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold">{isAddingService ? 'Saving...' : 'Save Service'}</button></div></form></div>}'''
-            s = s.replace(service_marker, service_modal + service_marker, 1)
+          # ---- Storage: payment actions must work on a fresh admin device ----
+          p = Path('src/lib/storage.ts')
+          s = p.read_text()
 
-          # Add a real Add Driver modal. The existing button already sets isAddingDriver=true.
-          if 'isAddingDriver &&' not in s:
-            driver_modal = '''{isAddingDriver && <div className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4"><form onSubmit={handleCreateDriver} className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 p-6 space-y-5"><div className="flex items-center justify-between"><div><span className="text-xs font-bold uppercase text-sky-700">Dispatch Fleet</span><h3 className="text-xl font-black text-slate-900">Add Driver</h3></div><button type="button" onClick={() => setIsAddingDriver(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400"><X className="w-5 h-5" /></button></div><input required value={newDriverName} onChange={(e) => setNewDriverName(e.target.value)} placeholder="Driver full name" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm" /><input required value={newDriverPhone} onChange={(e) => setNewDriverPhone(e.target.value)} placeholder="Phone number" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm" /><input value={newDriverVehicle} onChange={(e) => setNewDriverVehicle(e.target.value)} placeholder="Vehicle" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm" /><div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddingDriver(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold">Cancel</button><button type="submit" className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold">Create Driver</button></div></form></div>}'''
-            s = s.replace(service_marker, driver_modal + service_marker, 1)
+          old = """  async updatePaymentStatus(\n    orderId: string,\n    status: PaymentStatus,\n    reference?: string,\n    providerResponse?: any\n  ): Promise<Payment | null> {\n    const payments = getLocal<Payment[]>(KEYS.PAYMENTS, []);\n    const idx = payments.findIndex((p) => p.order_id === orderId);\n    if (idx < 0) return null;\n"""
+          new = """  async updatePaymentStatus(\n    orderId: string,\n    status: PaymentStatus,\n    reference?: string,\n    providerResponse?: any\n  ): Promise<Payment | null> {\n    // Always hydrate payments from Supabase first. The admin may be on a different\n    // phone/browser and therefore have no local payment cache.\n    const payments = await db.getPayments();\n    const idx = payments.findIndex((p) => p.order_id === orderId);\n    if (idx < 0) throw new Error(`Payment record not found for order ${orderId}`);\n"""
+          if old not in s:
+            raise SystemExit('payment block not found; refusing partial patch')
+          s = s.replace(old, new, 1)
 
-          # Add an explicit Approve/Confirm action to the order modal.
-          approve_marker = '<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50'
-          if 'Approve & Confirm Order' not in s:
-            approve = '''<button type="button" disabled={isUpdatingOrder || selectedOrder.status === 'confirmed'} onClick={() => handleStatusChange('confirmed')} className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition disabled:opacity-50">{selectedOrder.status === 'confirmed' ? 'Order Confirmed' : 'Approve & Confirm Order'}</button>'''
-            s = s.replace(approve_marker, '<div className="flex justify-end">' + approve + '</div>' + approve_marker, 1)
+          # Do not silently swallow Supabase writes for services/profiles.
+          old = """        await supabase.from('services').upsert(saved);\n      } catch (e) {\n        console.error('Supabase save service error', e);\n      }\n"""
+          new = """        const { error } = await supabase.from('services').upsert(saved);\n        if (error) throw new Error(`Service save failed: ${error.message}`);\n      } catch (e) {\n        console.error('Supabase save service error', e);\n        throw e;\n      }\n"""
+          if old not in s:
+            raise SystemExit('service save block not found; refusing partial patch')
+          s = s.replace(old, new, 1)
+
+          old = """        await supabase.from('profiles').upsert(saved);\n      } catch (e) {\n        console.error('Supabase save profile error', e);\n      }\n"""
+          new = """        const { error } = await supabase.from('profiles').upsert(saved);\n        if (error) throw new Error(`Driver profile save failed: ${error.message}`);\n      } catch (e) {\n        console.error('Supabase save profile error', e);\n        throw e;\n      }\n"""
+          if old not in s:
+            raise SystemExit('profile save block not found; refusing partial patch')
+          s = s.replace(old, new, 1)
+
+          # Ensure payment writes are never reported as successful when Supabase rejected them.
+          old = """        const paymentUpdate = await supabase.from('payments').update({ status, transaction_reference: updatedPayment.transaction_reference, paid_at: updatedPayment.paid_at, updated_at: now }).eq('order_id', orderId); if (paymentUpdate.error) throw paymentUpdate.error;\n\n        const orderPaymentUpdate = await supabase.from('orders').update({ payment_status: status, updated_at: now }).eq('id', orderId); if (orderPaymentUpdate.error) throw orderPaymentUpdate.error;\n      } catch (e) {\n        console.error('Supabase update payment error', e);\n      }\n"""
+          new = """        const paymentUpdate = await supabase.from('payments').update({ status, transaction_reference: updatedPayment.transaction_reference, paid_at: updatedPayment.paid_at, updated_at: now }).eq('order_id', orderId);\n        if (paymentUpdate.error) throw new Error(`Payment update failed: ${paymentUpdate.error.message}`);\n\n        const orderPaymentUpdate = await supabase.from('orders').update({ payment_status: status, updated_at: now }).eq('id', orderId);\n        if (orderPaymentUpdate.error) throw new Error(`Order payment status update failed: ${orderPaymentUpdate.error.message}`);\n      } catch (e) {\n        console.error('Supabase update payment error', e);\n        throw e;\n      }\n"""
+          if old not in s:
+            raise SystemExit('payment write block not found; refusing partial patch')
+          s = s.replace(old, new, 1)
 
           p.write_text(s)
           PY
-      - name: Commit patched dashboard
+      - name: Commit patched dashboard and storage
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/pages/admin/AdminDashboard.tsx
+          git add src/pages/admin/AdminDashboard.tsx src/lib/storage.ts
           git diff --cached --quiet && exit 0
           git commit -m "admin UI actions applied"
           git push origin main
