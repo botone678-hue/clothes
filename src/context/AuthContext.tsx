@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { db } from '../lib/storage';
 import { Profile, UserRole } from '../types';
 
 interface AuthContextType {
@@ -41,8 +40,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return null;
     }
 
-    if (!profile) return null;
-    return profile as Profile;
+    return profile ? (profile as Profile) : null;
+  };
+
+  // The database trigger normally creates the profile immediately after signup.
+  // A short retry protects the client from the trigger/profile transaction not
+  // being visible yet when Supabase returns from signUp.
+  const waitForProfile = async (authUserId: string, attempts = 5): Promise<Profile | null> => {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const profile = await loadProfileForSession(authUserId);
+      if (profile) return profile;
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      }
+    }
+    return null;
   };
 
   useEffect(() => {
@@ -50,7 +62,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     async function initAuth() {
       setIsLoading(true);
-      // Never restore a client-created/demo account. The only valid session is Supabase Auth.
       localStorage.removeItem(AUTH_USER_KEY);
 
       if (!isSupabaseConfigured) {
@@ -72,10 +83,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const profile = await loadProfileForSession(session.user.id);
         if (mounted) {
-          if (profile) {
+          if (profile && profile.status === 'active') {
             setUser(profile);
           } else {
-            // A valid auth session without a profile is not granted an application role.
             await supabase.auth.signOut();
             setUser(null);
           }
@@ -90,9 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     initAuth();
 
-    if (!isSupabaseConfigured) {
-      return () => { mounted = false; };
-    }
+    if (!isSupabaseConfigured) return () => { mounted = false; };
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
@@ -105,7 +113,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
         const profile = await loadProfileForSession(session.user.id);
-        if (profile) {
+        if (!mounted) return;
+        if (profile && profile.status === 'active') {
           setUser(profile);
         } else {
           await supabase.auth.signOut();
@@ -125,9 +134,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!isSupabaseConfigured) {
       return { success: false, error: 'Authentication is not configured. Please connect Supabase Auth.' };
     }
-    if (!password) {
-      return { success: false, error: 'Password is required.' };
-    }
+    if (!password) return { success: false, error: 'Password is required.' };
 
     setIsLoading(true);
     clearLocalAuth();
@@ -139,11 +146,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: error?.message || 'Invalid email or password.' };
       }
 
-      const profile = await loadProfileForSession(data.user.id);
+      const profile = await waitForProfile(data.user.id);
       if (!profile) {
         await supabase.auth.signOut();
         setIsLoading(false);
-        return { success: false, error: 'Your account has no valid application profile. Contact an administrator.' };
+        return { success: false, error: 'Your account profile is not available yet. Please contact an administrator.' };
       }
 
       if (profile.status && profile.status !== 'active') {
@@ -176,11 +183,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     clearLocalAuth();
 
     try {
-      // Public registration can only ever create a customer.
+      // Public registration is ALWAYS a customer. Privileged roles are never
+      // accepted from the browser. The Supabase trigger creates the profile.
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
         password,
-        options: { data: { full_name: fullName, phone, role: 'customer' } },
+        options: { data: { full_name: fullName.trim(), phone, role: 'customer' } },
       });
 
       if (error) {
@@ -193,21 +201,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: 'Unable to create your account.' };
       }
 
-      const newProfile = await db.saveProfile({
-        auth_user_id: data.user.id,
-        full_name: fullName,
-        email: email.trim(),
-        phone,
-        role: 'customer',
-        status: 'active',
-      });
+      // Do not write the profile a second time from the browser. The database
+      // trigger is the authoritative profile creator and always forces customer
+      // registration to the customer role.
+      const newProfile = data.session ? await waitForProfile(data.user.id) : null;
 
-      // If email confirmation is enabled, there may be no active session yet.
-      if (data.session) {
-        setUser(newProfile);
-      } else {
-        setUser(null);
-      }
+      if (data.session && newProfile) setUser(newProfile);
+      else setUser(null);
 
       setIsLoading(false);
       return {
@@ -223,9 +223,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signOut = async () => {
     setIsLoading(true);
     try {
-      if (isSupabaseConfigured) {
-        await supabase.auth.signOut();
-      }
+      if (isSupabaseConfigured) await supabase.auth.signOut();
     } catch (e) {
       console.error('Supabase signout error', e);
     } finally {
@@ -235,9 +233,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resetPassword = async (email: string): Promise<{ success: boolean; message?: string; error?: string }> => {
-    if (!isSupabaseConfigured) {
-      return { success: false, error: 'Authentication is not configured.' };
-    }
+    if (!isSupabaseConfigured) return { success: false, error: 'Authentication is not configured.' };
 
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
@@ -270,8 +266,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const switchUserRole = (_targetRole: UserRole) => {
-    // Intentionally disabled. Roles must come from the authenticated Supabase profile.
-    console.warn('Client-side role switching is disabled.');
+    console.warn('Client-side role switching is disabled. Roles come only from Supabase profiles.');
   };
 
   return (
