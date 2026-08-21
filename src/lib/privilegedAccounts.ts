@@ -19,11 +19,30 @@ export async function createPrivilegedAccount(input: CreatePrivilegedAccountInpu
   });
 
   if (error) {
-    throw new Error(error.message || 'Unable to create privileged account.');
+    let detail = '';
+    try {
+      const context = (error as any).context;
+      if (context?.clone) {
+        const response = context.clone();
+        const text = await response.text();
+        if (text) {
+          try {
+            const parsed = JSON.parse(text);
+            detail = parsed?.error || parsed?.message || text;
+          } catch {
+            detail = text;
+          }
+        }
+      }
+    } catch {
+      // Keep the SDK error when the response body cannot be read.
+    }
+
+    throw new Error(detail || error.message || 'Unable to create privileged account.');
   }
 
   if (!data?.success) {
-    throw new Error(data?.error || 'Unable to create privileged account.');
+    throw new Error(data?.error || data?.message || 'Unable to create privileged account.');
   }
 
   return data.account;
