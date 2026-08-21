@@ -28,11 +28,9 @@ const MainAppContent: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
   const [trackingOrderId, setTrackingOrderId] = useState<string | undefined>(undefined);
 
-  // Auth Modals
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
 
-  // Notification Toast
   const [toastMessage, setToastMessage] = useState<{ title: string; body: string; type?: 'info' | 'success' | 'alert' } | null>(null);
 
   const fetchServices = async () => {
@@ -43,7 +41,6 @@ const MainAppContent: React.FC = () => {
   useEffect(() => {
     fetchServices();
 
-    // Listen to real-time notification events
     const unsubNotify = subscribeToEvent('notification', (payload) => {
       setToastMessage({
         title: payload.title || 'Clothes Spa Notification',
@@ -57,20 +54,17 @@ const MainAppContent: React.FC = () => {
     };
   }, []);
 
-  // When tracking an order from customer list or receipt
   const handleTrackOrder = (orderId: string) => {
     setTrackingOrderId(orderId);
     setCurrentTab('tracking');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Keep navigation smooth
   const handleSetTab = (tab: string) => {
     setCurrentTab(tab);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Render the appropriate main view based on currentTab
   const renderContent = () => {
     switch (currentTab) {
       case 'home':
@@ -135,7 +129,6 @@ const MainAppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-sky-500 selection:text-white font-sans antialiased">
-      {/* Real-time Push Toast */}
       {toastMessage && (
         <NotificationToast
           title={toastMessage.title}
@@ -145,32 +138,25 @@ const MainAppContent: React.FC = () => {
         />
       )}
 
-      {/* Main Top Navigation */}
       <Navbar
         currentTab={currentTab}
         setCurrentTab={handleSetTab}
         onOpenAuth={() => setIsAuthModalOpen(true)}
       />
 
-      {/* Main Page Body */}
-      <main className="flex-1">
-        {renderContent()}
-      </main>
+      <main className="flex-1">{renderContent()}</main>
 
-      {/* Global Brand Footer */}
       <Footer setCurrentTab={handleSetTab} />
 
-      {/* Login / Sign Up Modal */}
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
-        onForgotPassword={() => {
+        onOpenForgot={() => {
           setIsAuthModalOpen(false);
           setIsForgotPasswordOpen(true);
         }}
       />
 
-      {/* Password Reset Modal */}
       <ForgotPasswordModal
         isOpen={isForgotPasswordOpen}
         onClose={() => setIsForgotPasswordOpen(false)}
