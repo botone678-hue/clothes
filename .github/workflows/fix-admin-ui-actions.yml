@@ -1,0 +1,62 @@
+name: Fix admin UI actions
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: "!contains(github.event.head_commit.message, 'admin UI actions applied')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch AdminDashboard action wiring
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/pages/admin/AdminDashboard.tsx')
+          s = p.read_text()
+
+          # Make the existing Manage control a hard UI event handler.
+          s = s.replace(
+            'onClick={() => setSelectedOrder(ord)} className="px-3 py-1.5 bg-slate-900',
+            'type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedOrder(ord); }} onPointerDown={(e) => { e.stopPropagation(); }} className="px-3 py-1.5 bg-slate-900'
+          )
+
+          # Make the payment Details control explicit button type and event-safe.
+          s = s.replace(
+            '<button onClick={() => setSelectedOrder(ord)} className="px-2.5 py-1.5 bg-slate-900',
+            '<button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedOrder(ord); }} className="px-2.5 py-1.5 bg-slate-900'
+          )
+
+          # Ensure existing tab/action buttons are not interpreted as implicit submits.
+          s = s.replace('<button onClick=', '<button type="button" onClick=')
+          s = s.replace('<button disabled=', '<button type="button" disabled=')
+
+          # Add a real Add Service modal. The existing button already sets isAddingService=true.
+          service_marker = '{selectedOrder && <div className="fixed inset-0 z-50'
+          if 'isAddingService &&' not in s:
+            service_modal = '''{isAddingService && <div className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4"><form onSubmit={handleCreateService} className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 p-6 space-y-5"><div className="flex items-center justify-between"><div><span className="text-xs font-bold uppercase text-sky-700">Services & Pricing</span><h3 className="text-xl font-black text-slate-900">Add Service</h3></div><button type="button" onClick={() => setIsAddingService(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400"><X className="w-5 h-5" /></button></div><div className="space-y-3"><input required value={newServiceName} onChange={(e) => setNewServiceName(e.target.value)} placeholder="Service name" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" /><select value={newServiceCategory} onChange={(e) => setNewServiceCategory(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm"><option value="wash_fold">Wash & Fold</option><option value="wash_press">Wash & Press</option><option value="dry_cleaning">Dry Cleaning</option><option value="specialty">Specialty Care</option></select><div className="grid grid-cols-2 gap-3"><input type="number" min="0" value={newServicePrice} onChange={(e) => setNewServicePrice(Number(e.target.value))} placeholder="Price" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm" /><select value={newServiceType} onChange={(e) => setNewServiceType(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm"><option value="per_item">Per Item</option><option value="per_kg">Per Kg</option><option value="per_pair">Per Pair</option><option value="flat">Flat</option></select></div><input value={newServiceDuration} onChange={(e) => setNewServiceDuration(e.target.value)} placeholder="Turnaround" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm" /><textarea value={newServiceDesc} onChange={(e) => setNewServiceDesc(e.target.value)} placeholder="Description" rows={3} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm resize-none" /></div><div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddingService(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold">Cancel</button><button type="submit" disabled={isAddingService} className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold">{isAddingService ? 'Saving...' : 'Save Service'}</button></div></form></div>}'''
+            s = s.replace(service_marker, service_modal + service_marker, 1)
+
+          # Add a real Add Driver modal. The existing button already sets isAddingDriver=true.
+          if 'isAddingDriver &&' not in s:
+            driver_modal = '''{isAddingDriver && <div className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4"><form onSubmit={handleCreateDriver} className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 p-6 space-y-5"><div className="flex items-center justify-between"><div><span className="text-xs font-bold uppercase text-sky-700">Dispatch Fleet</span><h3 className="text-xl font-black text-slate-900">Add Driver</h3></div><button type="button" onClick={() => setIsAddingDriver(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400"><X className="w-5 h-5" /></button></div><input required value={newDriverName} onChange={(e) => setNewDriverName(e.target.value)} placeholder="Driver full name" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm" /><input required value={newDriverPhone} onChange={(e) => setNewDriverPhone(e.target.value)} placeholder="Phone number" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm" /><input value={newDriverVehicle} onChange={(e) => setNewDriverVehicle(e.target.value)} placeholder="Vehicle" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm" /><div className="flex justify-end gap-2"><button type="button" onClick={() => setIsAddingDriver(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold">Cancel</button><button type="submit" className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold">Create Driver</button></div></form></div>}'''
+            s = s.replace(service_marker, driver_modal + service_marker, 1)
+
+          # Add an explicit Approve/Confirm action to the order modal.
+          approve_marker = '<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50'
+          if 'Approve & Confirm Order' not in s:
+            approve = '''<button type="button" disabled={isUpdatingOrder || selectedOrder.status === 'confirmed'} onClick={() => handleStatusChange('confirmed')} className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition disabled:opacity-50">{selectedOrder.status === 'confirmed' ? 'Order Confirmed' : 'Approve & Confirm Order'}</button>'''
+            s = s.replace(approve_marker, '<div className="flex justify-end">' + approve + '</div>' + approve_marker, 1)
+
+          p.write_text(s)
+          PY
+      - name: Commit patched dashboard
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/admin/AdminDashboard.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "admin UI actions applied"
+          git push origin main
