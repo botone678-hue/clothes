@@ -1,0 +1,110 @@
+name: Fix admin actions
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: "!contains(github.event.head_commit.message, 'fix admin actions')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch storage actions
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          p = Path('src/lib/storage.ts')
+          s = p.read_text()
+
+          status_pat = r"  async updateOrderStatus\(.*?\n  \},\n\n  async assignDriver"
+          status_repl = '''  async updateOrderStatus(
+    orderId: string,
+    newStatus: OrderStatus,
+    changedById: string,
+    changedByName: string,
+    notes?: string
+  ): Promise<Order | null> {
+    let current = await db.getOrderById(orderId);
+    if (!current) return null;
+    const now = new Date().toISOString();
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('orders').update({ status: newStatus, updated_at: now }).eq('id', orderId).select('*, items:order_items(*)').single();
+      if (error) throw new Error(`Order status update failed: ${error.message}`);
+      current = data as Order;
+    }
+    const updatedOrder: Order = { ...current, status: newStatus, updated_at: now };
+    await db.addStatusHistory(orderId, newStatus, changedById, changedByName, notes || `Status updated to ${newStatus}`);
+    const statusMessages: Record<OrderStatus, { title: string; msg: string }> = {
+      pending: { title: 'Order Pending', msg: 'Your order is pending confirmation.' }, confirmed: { title: 'Order Confirmed', msg: `Order #${updatedOrder.order_number} has been confirmed by Clothes Spa.` },
+      driver_assigned: { title: 'Driver Assigned', msg: `Driver ${updatedOrder.driver_name || 'Assigned Driver'} will pick up your laundry.` }, pickup_scheduled: { title: 'Pickup Scheduled', msg: `Your pickup is scheduled for ${updatedOrder.pickup_date} at ${updatedOrder.pickup_time}.` },
+      picked_up: { title: 'Laundry Picked Up', msg: 'Your garments have been picked up and are en route to our Hawaii Area spa facility.' }, processing: { title: 'Spa Treatment & Washing in Progress', msg: 'Your clothes are undergoing deep sanitization, washing, and specialized garment care.' },
+      ready_for_delivery: { title: 'Ready for Delivery', msg: 'Your garments are freshly cleaned, pressed, sanitized, and ready for dispatch.' }, out_for_delivery: { title: 'Out for Delivery', msg: 'Your cleaned laundry is on the way to your delivery address in Eldoret!' },
+      delivered: { title: 'Delivered', msg: `Your laundry order #${updatedOrder.order_number} has been delivered. Thank you for choosing Clothes Spa!` }, completed: { title: 'Order Completed', msg: `Order #${updatedOrder.order_number} is completed.` }, cancelled: { title: 'Order Cancelled', msg: `Order #${updatedOrder.order_number} has been cancelled.` }
+    };
+    const info = statusMessages[newStatus];
+    if (info) await db.createNotification({ user_id: updatedOrder.customer_id, order_id: orderId, type: `order_status_${newStatus}`, title: info.title, message: info.msg });
+    emitEvent('orders', updatedOrder);
+    return updatedOrder;
+  },
+
+  async assignDriver'''
+          s2, n = re.subn(status_pat, status_repl, s, flags=re.S)
+          if n != 1: raise SystemExit(f'status patch count={n}')
+          s = s2
+
+          assign_pat = r"  async assignDriver\(.*?\n  \},\n\n  async createDriver"
+          assign_repl = '''  async assignDriver(orderId: string, driverId: string, assignedByName?: string, driverPhone?: string): Promise<Order | null> {
+    const drivers = await db.getDrivers();
+    const driver = drivers.find((d) => d.id === driverId);
+    if (!driver) throw new Error('Driver not found');
+    const current = await db.getOrderById(orderId);
+    if (!current) throw new Error('Order not found');
+    const now = new Date().toISOString();
+    const driverName = driver.full_name || driver.name || 'Driver';
+    const phone = driverPhone || driver.phone;
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.from('orders').update({ driver_id: driver.id, driver_name: driverName, driver_phone: phone, status: 'driver_assigned', updated_at: now }).eq('id', orderId).select('*, items:order_items(*)').single();
+      if (error) throw new Error(`Driver assignment failed: ${error.message}`);
+      await supabase.from('driver_assignments').insert({ order_id: orderId, driver_id: driver.id, status: 'assigned' });
+      const updated = data as Order;
+      await db.addStatusHistory(orderId, 'driver_assigned', undefined, assignedByName || 'Admin', `Assigned to driver ${driverName} (${phone})`);
+      emitEvent('orders', updated); emitEvent('drivers', updated); return updated;
+    }
+    throw new Error('Supabase is not configured');
+  },
+
+  async createDriver'''
+          s2, n = re.subn(assign_pat, assign_repl, s, flags=re.S)
+          if n != 1: raise SystemExit(f'assign patch count={n}')
+          s = s2
+
+          pay_pat = r"  async updatePaymentStatus\(.*?\n  \},\n\n  // --- ORDER STATUS HISTORY ---"
+          pay_repl = '''  async updatePaymentStatus(orderId: string, status: PaymentStatus, reference?: string, providerResponse?: any): Promise<Payment | null> {
+    const now = new Date().toISOString();
+    if (!isSupabaseConfigured) throw new Error('Supabase is not configured');
+    const { data: payment, error: paymentError } = await supabase.from('payments').update({ status, transaction_reference: reference, provider_response: providerResponse, paid_at: status === 'paid' ? now : null, updated_at: now }).eq('order_id', orderId).select('*').single();
+    if (paymentError) throw new Error(`Payment update failed: ${paymentError.message}`);
+    const { error: orderError } = await supabase.from('orders').update({ payment_status: status, updated_at: now }).eq('id', orderId);
+    if (orderError) throw new Error(`Order payment update failed: ${orderError.message}`);
+    emitEvent('orders', { id: orderId, payment_status: status, updated_at: now });
+    return payment as Payment;
+  },
+
+  // --- ORDER STATUS HISTORY ---'''
+          s2, n = re.subn(pay_pat, pay_repl, s, flags=re.S)
+          if n != 1: raise SystemExit(f'payment patch count={n}')
+          p.write_text(s2)
+      - name: Commit and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/storage.ts .github/workflows/fix-admin-actions.yml
+          git commit -m "fix admin actions to use Supabase" || exit 0
+          git rm .github/workflows/fix-admin-actions.yml
+          git commit -m "remove temporary admin action patch workflow"
+          git push origin main
