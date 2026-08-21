@@ -16,20 +16,16 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const AUTH_USER_KEY = 'csl_current_user_v1';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSupabaseOnline] = useState(isSupabaseConfigured);
 
-  const clearLocalAuth = () => {
-    localStorage.removeItem(AUTH_USER_KEY);
-    setUser(null);
-  };
+  const clearLocalAuth = () => setUser(null);
 
   const loadProfileForSession = async (authUserId: string): Promise<Profile | null> => {
-    const { data: profile, error } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('auth_user_id', authUserId)
@@ -39,19 +35,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Unable to load authenticated profile:', error);
       return null;
     }
-
-    return profile ? (profile as Profile) : null;
+    return data ? (data as Profile) : null;
   };
 
-  // The database trigger normally creates the profile immediately after signup.
-  // A short retry protects the client from the trigger/profile transaction not
-  // being visible yet when Supabase returns from signUp.
-  const waitForProfile = async (authUserId: string, attempts = 5): Promise<Profile | null> => {
+  const waitForProfile = async (authUserId: string, attempts = 8): Promise<Profile | null> => {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const profile = await loadProfileForSession(authUserId);
       if (profile) return profile;
       if (attempt < attempts - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+        await new Promise((resolve) => setTimeout(resolve, 300 + attempt * 250));
       }
     }
     return null;
@@ -60,15 +52,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let mounted = true;
 
-    async function initAuth() {
-      setIsLoading(true);
-      localStorage.removeItem(AUTH_USER_KEY);
-
+    const initAuth = async () => {
       if (!isSupabaseConfigured) {
-        if (mounted) {
-          setUser(null);
-          setIsLoading(false);
-        }
+        if (mounted) setIsLoading(false);
         return;
       }
 
@@ -82,27 +68,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         const profile = await loadProfileForSession(session.user.id);
-        if (mounted) {
-          if (profile && profile.status === 'active') {
-            setUser(profile);
-          } else {
-            await supabase.auth.signOut();
-            setUser(null);
-          }
+        if (!mounted) return;
+
+        if (profile && profile.status === 'active') {
+          setUser(profile);
+        } else {
+          await supabase.auth.signOut();
+          setUser(null);
         }
-      } catch (e) {
-        console.error('Supabase session load error:', e);
+      } catch (error) {
+        console.error('Supabase session load error:', error);
         if (mounted) setUser(null);
       } finally {
         if (mounted) setIsLoading(false);
       }
-    }
+    };
 
+    setIsLoading(true);
     initAuth();
 
-    if (!isSupabaseConfigured) return () => { mounted = false; };
+    if (!isSupabaseConfigured) {
+      return () => { mounted = false; };
+    }
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    // Do not perform async profile/database work directly inside the Supabase
+    // auth callback. Queue it after the callback returns to avoid auth-lock/race
+    // conditions that can make the customer page appear to crash after login.
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
 
       if (event === 'SIGNED_OUT' || !session?.user) {
@@ -112,15 +104,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
-        const profile = await loadProfileForSession(session.user.id);
-        if (!mounted) return;
-        if (profile && profile.status === 'active') {
-          setUser(profile);
-        } else {
-          await supabase.auth.signOut();
-          clearLocalAuth();
-        }
-        setIsLoading(false);
+        setTimeout(async () => {
+          if (!mounted) return;
+          try {
+            const profile = await loadProfileForSession(session.user.id);
+            if (!mounted) return;
+
+            if (profile && profile.status === 'active') {
+              setUser(profile);
+            } else {
+              await supabase.auth.signOut();
+              setUser(null);
+            }
+          } catch (error) {
+            console.error('Authenticated profile load failed:', error);
+            if (mounted) setUser(null);
+          } finally {
+            if (mounted) setIsLoading(false);
+          }
+        }, 0);
       }
     });
 
@@ -130,7 +132,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  const signIn = async (email: string, password?: string, _role?: UserRole): Promise<{ success: boolean; error?: string }> => {
+  const signIn = async (email: string, password?: string, _role?: UserRole) => {
     if (!isSupabaseConfigured) {
       return { success: false, error: 'Authentication is not configured. Please connect Supabase Auth.' };
     }
@@ -140,20 +142,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     clearLocalAuth();
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      });
+
       if (error || !data.user) {
         setIsLoading(false);
-        return { success: false, error: error?.message || 'Invalid email or password.' };
+        const message = error?.message || 'Invalid email or password.';
+        return { success: false, error: message };
       }
 
       const profile = await waitForProfile(data.user.id);
       if (!profile) {
         await supabase.auth.signOut();
         setIsLoading(false);
-        return { success: false, error: 'Your account profile is not available yet. Please contact an administrator.' };
+        return {
+          success: false,
+          error: 'Your account was found, but your customer profile is still being created. Please wait a moment and try again.',
+        };
       }
 
-      if (profile.status && profile.status !== 'active') {
+      if (profile.status !== 'active') {
         await supabase.auth.signOut();
         setIsLoading(false);
         return { success: false, error: 'Your account is not active. Contact an administrator.' };
@@ -162,9 +172,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(profile);
       setIsLoading(false);
       return { success: true };
-    } catch (err: any) {
+    } catch (error: any) {
       setIsLoading(false);
-      return { success: false, error: err?.message || 'Unable to sign in.' };
+      return { success: false, error: error?.message || 'Unable to sign in.' };
     }
   };
 
@@ -174,7 +184,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fullName: string,
     phone: string,
     _role: UserRole = 'customer'
-  ): Promise<{ success: boolean; error?: string }> => {
+  ) => {
     if (!isSupabaseConfigured) {
       return { success: false, error: 'Authentication is not configured. Please connect Supabase Auth.' };
     }
@@ -183,12 +193,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     clearLocalAuth();
 
     try {
-      // Public registration is ALWAYS a customer. Privileged roles are never
-      // accepted from the browser. The Supabase trigger creates the profile.
       const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         password,
-        options: { data: { full_name: fullName.trim(), phone, role: 'customer' } },
+        options: {
+          data: {
+            full_name: fullName.trim(),
+            phone,
+            role: 'customer',
+          },
+        },
       });
 
       if (error) {
@@ -201,22 +215,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: 'Unable to create your account.' };
       }
 
-      // Do not write the profile a second time from the browser. The database
-      // trigger is the authoritative profile creator and always forces customer
-      // registration to the customer role.
-      const newProfile = data.session ? await waitForProfile(data.user.id) : null;
+      // When email confirmation is enabled Supabase returns no session. Keep
+      // the user logged out and tell the UI to verify the email before login.
+      if (!data.session) {
+        setIsLoading(false);
+        return {
+          success: true,
+          error: 'Account created. Please confirm your email address, then sign in.',
+        };
+      }
 
-      if (data.session && newProfile) setUser(newProfile);
-      else setUser(null);
+      const profile = await waitForProfile(data.user.id);
+      if (!profile) {
+        await supabase.auth.signOut();
+        setIsLoading(false);
+        return {
+          success: false,
+          error: 'Account created, but your customer profile is still being prepared. Please sign in again in a moment.',
+        };
+      }
 
+      setUser(profile);
       setIsLoading(false);
-      return {
-        success: true,
-        ...(data.session ? {} : { error: 'Account created. Please verify your email, then sign in.' }),
-      };
-    } catch (err: any) {
+      return { success: true };
+    } catch (error: any) {
       setIsLoading(false);
-      return { success: false, error: err?.message || 'Unable to create your account.' };
+      return { success: false, error: error?.message || 'Unable to create your account.' };
     }
   };
 
@@ -224,43 +248,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       if (isSupabaseConfigured) await supabase.auth.signOut();
-    } catch (e) {
-      console.error('Supabase signout error', e);
+    } catch (error) {
+      console.error('Supabase signout error:', error);
     } finally {
       clearLocalAuth();
       setIsLoading(false);
     }
   };
 
-  const resetPassword = async (email: string): Promise<{ success: boolean; message?: string; error?: string }> => {
+  const resetPassword = async (email: string) => {
     if (!isSupabaseConfigured) return { success: false, error: 'Authentication is not configured.' };
-
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
         redirectTo: `${window.location.origin}/reset-password`,
       });
       if (error) return { success: false, error: error.message };
       return { success: true, message: `Password reset instructions have been sent to ${email}. Check your inbox.` };
-    } catch (err: any) {
-      return { success: false, error: err?.message || 'Unable to send password reset instructions.' };
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Unable to send password reset instructions.' };
     }
   };
 
-  const updateProfile = async (updates: Partial<Profile>): Promise<Profile | null> => {
+  const updateProfile = async (updates: Partial<Profile>) => {
     if (!user || !isSupabaseConfigured) return null;
-
     const { data, error } = await supabase
       .from('profiles')
       .update(updates)
       .eq('auth_user_id', user.auth_user_id)
       .select('*')
       .single();
-
     if (error || !data) {
       console.error('Unable to update profile:', error);
       return null;
     }
-
     setUser(data as Profile);
     return data as Profile;
   };
