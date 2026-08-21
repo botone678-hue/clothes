@@ -1,0 +1,46 @@
+name: Fix notification recipient column
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Replace invalid notification user_id field
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/lib/storage.ts')
+          s = p.read_text()
+          old = "user_id: updatedPayment.customer_id"
+          new = "recipient_id: updatedPayment.customer_id"
+          count = s.count(old)
+          if count == 0:
+              print('No user_id payment notification fields found; nothing to change.')
+          else:
+              s = s.replace(old, new)
+              p.write_text(s)
+              print(f'Replaced {count} notification field(s).')
+          PY
+
+      - name: Commit patch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/storage.ts
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+          else
+            git commit -m 'fix: align payment notifications with recipient_id schema'
+            git push origin main
+          fi
