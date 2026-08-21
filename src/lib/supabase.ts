@@ -1,17 +1,14 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim() || '';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() || '';
 
-// Validate if real credentials have been configured
-export const isSupabaseConfigured = Boolean(
-  supabaseUrl &&
-    supabaseAnonKey &&
-    !supabaseUrl.includes('your-project') &&
-    !supabaseAnonKey.includes('your-anon-key')
-);
+export const isSupabaseConfigured =
+  /^https:\/\/[^\s]+\.supabase\.co$/.test(supabaseUrl) &&
+  supabaseAnonKey.length > 20;
 
-// Fallback safety client if not yet configured, preventing crash
+// Keep a client available so the app can render a useful configuration error
+// instead of crashing before the environment variables are loaded.
 export const supabase: SupabaseClient = createClient(
   isSupabaseConfigured ? supabaseUrl : 'https://placeholder.supabase.co',
   isSupabaseConfigured ? supabaseAnonKey : 'placeholder-anon-key',
@@ -21,12 +18,7 @@ export const supabase: SupabaseClient = createClient(
       persistSession: true,
       detectSessionInUrl: true,
     },
-    realtime: {
-      params: {
-        eventsPerSecond: 10,
-      },
-    },
-  }
+  },
 );
 
 export interface SupabaseConfigStatus {
