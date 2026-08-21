@@ -22,9 +22,15 @@ import { TermsPage } from './pages/TermsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { SignupPage } from './pages/SignupPage';
 
+const tabFromPath = () => {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (path === '/signup') return 'signup';
+  return 'home';
+};
+
 const MainAppContent: React.FC = () => {
   const { user } = useAuth();
-  const [currentTab, setCurrentTab] = useState<string>('home');
+  const [currentTab, setCurrentTab] = useState<string>(tabFromPath);
   const [services, setServices] = useState<Service[]>([]);
   const [trackingOrderId, setTrackingOrderId] = useState<string | undefined>();
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
@@ -41,7 +47,9 @@ const MainAppContent: React.FC = () => {
       body: payload.message || payload.body,
       type: payload.type || 'info',
     }));
-    return () => unsub();
+    const onPopState = () => setCurrentTab(tabFromPath());
+    window.addEventListener('popstate', onPopState);
+    return () => { unsub(); window.removeEventListener('popstate', onPopState); };
   }, []);
 
   const openAuth = (mode: 'signin' | 'signup' = 'signin') => {
@@ -51,6 +59,8 @@ const MainAppContent: React.FC = () => {
 
   const handleSetTab = (tab: string) => {
     setCurrentTab(tab);
+    const path = tab === 'signup' ? '/signup' : '/';
+    if (window.location.pathname !== path) window.history.pushState({}, '', path);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
