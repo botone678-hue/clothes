@@ -1,0 +1,23 @@
+name: Restore storage after accidental overwrite
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  restore:
+    if: "!contains(github.event.head_commit.message, 'storage restored')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Restore storage.ts from previous commit
+        run: |
+          git checkout HEAD^ -- src/lib/storage.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/storage.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: storage restored"
+          git push origin main
