@@ -716,13 +716,7 @@ export const db = {
 
     if (isSupabaseConfigured) {
       try {
-        await supabase
-          .from('orders')
-          .update({
-            status: newStatus,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', orderId);
+        const { error } = await supabase.from('orders').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', orderId); if (error) throw error;
       } catch (e) {
         console.error('Supabase update status error', e);
       }
@@ -915,23 +909,9 @@ export const db = {
 
     if (isSupabaseConfigured) {
       try {
-        await supabase
-          .from('payments')
-          .update({
-            status,
-            transaction_reference: updatedPayment.transaction_reference,
-            paid_at: updatedPayment.paid_at,
-            updated_at: now,
-          })
-          .eq('order_id', orderId);
+        const paymentUpdate = await supabase.from('payments').update({ status, transaction_reference: updatedPayment.transaction_reference, paid_at: updatedPayment.paid_at, updated_at: now }).eq('order_id', orderId); if (paymentUpdate.error) throw paymentUpdate.error;
 
-        await supabase
-          .from('orders')
-          .update({
-            payment_status: status,
-            updated_at: now,
-          })
-          .eq('id', orderId);
+        const orderPaymentUpdate = await supabase.from('orders').update({ payment_status: status, updated_at: now }).eq('id', orderId); if (orderPaymentUpdate.error) throw orderPaymentUpdate.error;
       } catch (e) {
         console.error('Supabase update payment error', e);
       }
