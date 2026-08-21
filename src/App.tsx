@@ -21,6 +21,7 @@ import { PrivacyPage } from './pages/PrivacyPage';
 import { TermsPage } from './pages/TermsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { SignupPage } from './pages/SignupPage';
+import { PrivilegedAccountManager } from './components/admin/PrivilegedAccountManager';
 import { UserRole } from './types';
 
 const tabFromPath = () => {
@@ -102,7 +103,12 @@ const MainAppContent: React.FC = () => {
       case 'driver':
       case 'driver-dashboard': return role === 'driver' ? <DriverDashboard /> : accessDenied('driver');
       case 'admin':
-      case 'admin-dashboard': return role === 'admin' ? <AdminDashboard services={services} onRefreshServices={fetchServices} /> : accessDenied('admin');
+      case 'admin-dashboard': return role === 'admin' ? (
+        <>
+          <PrivilegedAccountManager />
+          <AdminDashboard services={services} onRefreshServices={fetchServices} />
+        </>
+      ) : accessDenied('admin');
       case 'privacy': return <PrivacyPage setCurrentTab={handleSetTab} />;
       case 'terms': return <TermsPage setCurrentTab={handleSetTab} />;
       default: return <NotFoundPage setCurrentTab={handleSetTab} />;
