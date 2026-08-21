@@ -1,4 +1,4 @@
-name: Restore storage after accidental overwrite
+name: Restore storage and deployable admin data layer
 on:
   push:
     branches: [main]
@@ -6,18 +6,18 @@ permissions:
   contents: write
 jobs:
   restore:
-    if: "!contains(github.event.head_commit.message, 'storage restored')"
+    if: "!contains(github.event.head_commit.message, 'storage restored from known-good')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
-      - name: Restore storage.ts from previous commit
+          fetch-depth: 0
+      - name: Restore known-good storage implementation
         run: |
-          git checkout HEAD^ -- src/lib/storage.ts
+          git checkout 0cdcfecd2bd1e5978ec81693cce4b7195056f4cc -- src/lib/storage.ts
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/lib/storage.ts
           git diff --cached --quiet && exit 0
-          git commit -m "fix: storage restored"
+          git commit -m "fix: storage restored from known-good"
           git push origin main
