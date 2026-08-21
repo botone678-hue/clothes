@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { X, Mail, Lock, User, Phone, Sparkles, AlertCircle, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { X, Mail, Lock, User, Phone, Sparkles, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { normalizeKenyanPhone } from '../../lib/mpesa';
 
 interface AuthModalProps {
@@ -10,19 +10,13 @@ interface AuthModalProps {
   onOpenForgot?: () => void;
 }
 
-export const AuthModal: React.FC<AuthModalProps> = ({
-  isOpen,
-  onClose,
-  initialMode = 'signin',
-  onOpenForgot,
-}) => {
+export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'signin', onOpenForgot }) => {
   const { signIn, signUp } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup'>(initialMode === 'forgot' ? 'signin' : initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState<'customer' | 'driver' | 'admin'>('customer');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -37,7 +31,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     try {
       if (mode === 'signin') {
-        const res = await signIn(email, password, role);
+        // Role is intentionally NOT supplied by the browser. Supabase profile role is authoritative.
+        const res = await signIn(email, password);
         if (!res.success) {
           setError(res.error || 'Invalid login credentials. Please try again.');
         } else {
@@ -45,15 +40,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           setTimeout(() => onClose(), 600);
         }
       } else {
-        if (!fullName || !phone) {
+        if (!fullName.trim() || !phone.trim()) {
           setError('Please provide your full name and Kenyan phone number.');
           setLoading(false);
           return;
         }
 
         const normalizedPhone = normalizeKenyanPhone(phone);
-        // Public registration is always a customer account. Privileged accounts
-        // must be created/managed by an administrator.
         const res = await signUp(email, password, fullName, normalizedPhone, 'customer');
         if (!res.success) {
           setError(res.error || 'Registration failed. Please try again.');
@@ -63,7 +56,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }
       }
     } catch (err: any) {
-      setError(err.message || 'An unexpected error occurred');
+      setError(err?.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }
@@ -71,10 +64,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-fade-in">
-      <div
-        id="auth-modal-container"
-        className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden"
-      >
+      <div id="auth-modal-container" className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden">
         <div className="px-6 pt-6 pb-4 bg-gradient-to-r from-sky-600 to-indigo-700 text-white relative">
           <button id="close-auth-modal" onClick={onClose} className="absolute top-4 right-4 p-1.5 rounded-full text-white/80 hover:text-white hover:bg-white/10 transition">
             <X className="w-5 h-5" />
@@ -90,35 +80,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && (
-            <div className="flex items-start gap-2.5 p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-sm">
-              <AlertCircle className="w-5 h-5 flex-shrink-0 text-rose-600 mt-0.5" /><span>{error}</span>
-            </div>
-          )}
-          {success && (
-            <div className="flex items-center gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm">
-              <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-600" /><span>{success}</span>
-            </div>
-          )}
-
-          {mode === 'signin' && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">Account Type</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['customer', 'driver', 'admin'] as const).map((r) => (
-                  <button
-                    type="button"
-                    key={r}
-                    onClick={() => setRole(r)}
-                    className={`py-2 px-2.5 rounded-xl text-xs font-semibold capitalize border transition text-center ${role === r ? 'bg-sky-50 border-sky-500 text-sky-700 shadow-xs' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    {r === 'customer' ? 'Customer' : r === 'driver' ? 'Driver' : 'Admin'}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-1.5 text-[11px] text-slate-500">Your actual account role is determined by your authenticated profile.</p>
-            </div>
-          )}
+          {error && <div className="flex items-start gap-2.5 p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-sm"><AlertCircle className="w-5 h-5 flex-shrink-0 text-rose-600 mt-0.5" /><span>{error}</span></div>}
+          {success && <div className="flex items-center gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm"><CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-600" /><span>{success}</span></div>}
 
           {mode === 'signup' && (
             <>
