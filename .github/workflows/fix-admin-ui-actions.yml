@@ -14,52 +14,26 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
-          # ---- Admin UI ----
+          import re
           p = Path('src/pages/admin/AdminDashboard.tsx')
           s = p.read_text()
-
-          s = s.replace(
-            'onClick={() => setSelectedOrder(ord)} className="px-3 py-1.5 bg-slate-900',
-            'type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedOrder(ord); }} onPointerDown={(e) => { e.stopPropagation(); }} className="px-3 py-1.5 bg-slate-900'
-          )
-          s = s.replace(
-            '<button onClick={() => setSelectedOrder(ord)} className="px-2.5 py-1.5 bg-slate-900',
-            '<button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedOrder(ord); }} onPointerDown={(e) => { e.stopPropagation(); }} className="px-2.5 py-1.5 bg-slate-900'
-          )
-          s = s.replace('<button onClick=', '<button type="button" onClick=')
-          s = s.replace('<button disabled=', '<button type="button" disabled=')
-
-          # ---- Storage: payment actions must work on a fresh admin device ----
+          replacements = {
+            "const handleAssignDriver = async (driverId: string) => { if (!selectedOrder) return; const driver = drivers.find((d) => d.id === driverId); if (!driver) return; setIsUpdatingOrder(true); await db.assignDriver(selectedOrder.id, driver.id, driver.full_name || driver.name || 'Driver', driver.phone); const updated = await db.getOrders(); setOrders(updated); const refreshed = updated.find((o) => o.id === selectedOrder.id); if (refreshed) setSelectedOrder(refreshed); setIsUpdatingOrder(false); };":
+            "const handleAssignDriver = async (driverId: string) => { if (!selectedOrder || isUpdatingOrder) return; const driver = drivers.find((d) => d.id === driverId); if (!driver) return; setIsUpdatingOrder(true); try { const result = await db.assignDriver(selectedOrder.id, driver.id, user?.full_name || 'Admin', driver.phone); if (!result) throw new Error('Driver assignment failed'); await loadData(); const refreshed = (await db.getOrders()).find((o) => o.id === selectedOrder.id); if (refreshed) setSelectedOrder(refreshed); } catch (error) { console.error('Admin driver assignment failed', error); window.alert(error instanceof Error ? error.message : String(error)); } finally { setIsUpdatingOrder(false); } };",
+            "const handlePaymentToggle = async (newPaymentStatus: PaymentStatus) => { if (!selectedOrder) return; setIsUpdatingOrder(true); await db.updatePaymentStatus(selectedOrder.id, newPaymentStatus); const updated = await db.getOrders(); setOrders(updated); const refreshed = updated.find((o) => o.id === selectedOrder.id); if (refreshed) setSelectedOrder(refreshed); setIsUpdatingOrder(false); };":
+            "const handlePaymentToggle = async (newPaymentStatus: PaymentStatus) => { if (!selectedOrder || isUpdatingOrder) return; setIsUpdatingOrder(true); try { await db.updatePaymentStatus(selectedOrder.id, newPaymentStatus); await loadData(); const refreshed = (await db.getOrders()).find((o) => o.id === selectedOrder.id); if (refreshed) setSelectedOrder(refreshed); } catch (error) { console.error('Admin payment update failed', error); window.alert(error instanceof Error ? error.message : String(error)); } finally { setIsUpdatingOrder(false); } };",
+            "const handleDirectPaymentAction = async (orderId: string, newStatus: PaymentStatus) => { setIsUpdatingOrder(true); await db.updatePaymentStatus(orderId, newStatus); const updated = await db.getOrders(); setOrders(updated); if (selectedOrder?.id === orderId) { const refreshed = updated.find((o) => o.id === orderId); if (refreshed) setSelectedOrder(refreshed); } setIsUpdatingOrder(false); };":
+            "const handleDirectPaymentAction = async (orderId: string, newStatus: PaymentStatus) => { if (isUpdatingOrder) return; setIsUpdatingOrder(true); try { await db.updatePaymentStatus(orderId, newStatus); await loadData(); if (selectedOrder?.id === orderId) { const refreshed = (await db.getOrders()).find((o) => o.id === orderId); if (refreshed) setSelectedOrder(refreshed); } } catch (error) { console.error('Admin direct payment action failed', error); window.alert(error instanceof Error ? error.message : String(error)); } finally { setIsUpdatingOrder(false); } };",
+            "const handleCreateDriver = async (e: React.FormEvent) => { e.preventDefault(); await db.createDriver({ name: newDriverName, phone: newDriverPhone, vehicle_type: newDriverVehicle, zone: 'Hawaii Area & Eldoret' }); setIsAddingDriver(false); setNewDriverName(''); setNewDriverPhone(''); void loadData(); };":
+            "const handleCreateDriver = async (e: React.FormEvent) => { e.preventDefault(); if (!newDriverName.trim() || !newDriverPhone.trim() || isAddingDriver) return; try { setIsAddingDriver(true); const saved = await db.createDriver({ name: newDriverName.trim(), phone: newDriverPhone.trim(), vehicle_type: newDriverVehicle.trim(), zone: 'Hawaii Area & Eldoret' }); if (!saved) throw new Error('Driver was not saved'); setNewDriverName(''); setNewDriverPhone(''); setIsAddingDriver(false); await loadData(); } catch (error) { console.error('Admin driver creation failed', error); window.alert(error instanceof Error ? error.message : String(error)); setIsAddingDriver(false); } };"
+          }
+          for old, new in replacements.items():
+            if old not in s: raise SystemExit('required AdminDashboard handler not found')
+            s = s.replace(old, new, 1)
+          for old, new in [('ord.total.toLocaleString()', 'Number(ord.total ?? 0).toLocaleString()'), ('selectedOrder.total.toLocaleString()', 'Number(selectedOrder.total ?? 0).toLocaleString()'), ('selectedOrder.delivery_fee.toLocaleString()', 'Number(selectedOrder.delivery_fee ?? 0).toLocaleString()'), ('it.subtotal.toLocaleString()', 'Number(it.subtotal ?? 0).toLocaleString()')]: s = s.replace(old, new)
+          p.write_text(s)
           p = Path('src/lib/storage.ts')
-          s = p.read_text()
-
-          old = """  async updatePaymentStatus(\n    orderId: string,\n    status: PaymentStatus,\n    reference?: string,\n    providerResponse?: any\n  ): Promise<Payment | null> {\n    const payments = getLocal<Payment[]>(KEYS.PAYMENTS, []);\n    const idx = payments.findIndex((p) => p.order_id === orderId);\n    if (idx < 0) return null;\n"""
-          new = """  async updatePaymentStatus(\n    orderId: string,\n    status: PaymentStatus,\n    reference?: string,\n    providerResponse?: any\n  ): Promise<Payment | null> {\n    // Always hydrate payments from Supabase first. The admin may be on a different\n    // phone/browser and therefore have no local payment cache.\n    const payments = await db.getPayments();\n    const idx = payments.findIndex((p) => p.order_id === orderId);\n    if (idx < 0) throw new Error(`Payment record not found for order ${orderId}`);\n"""
-          if old not in s:
-            raise SystemExit('payment block not found; refusing partial patch')
-          s = s.replace(old, new, 1)
-
-          # Do not silently swallow Supabase writes for services/profiles.
-          old = """        await supabase.from('services').upsert(saved);\n      } catch (e) {\n        console.error('Supabase save service error', e);\n      }\n"""
-          new = """        const { error } = await supabase.from('services').upsert(saved);\n        if (error) throw new Error(`Service save failed: ${error.message}`);\n      } catch (e) {\n        console.error('Supabase save service error', e);\n        throw e;\n      }\n"""
-          if old not in s:
-            raise SystemExit('service save block not found; refusing partial patch')
-          s = s.replace(old, new, 1)
-
-          old = """        await supabase.from('profiles').upsert(saved);\n      } catch (e) {\n        console.error('Supabase save profile error', e);\n      }\n"""
-          new = """        const { error } = await supabase.from('profiles').upsert(saved);\n        if (error) throw new Error(`Driver profile save failed: ${error.message}`);\n      } catch (e) {\n        console.error('Supabase save profile error', e);\n        throw e;\n      }\n"""
-          if old not in s:
-            raise SystemExit('profile save block not found; refusing partial patch')
-          s = s.replace(old, new, 1)
-
-          # Ensure payment writes are never reported as successful when Supabase rejected them.
-          old = """        const paymentUpdate = await supabase.from('payments').update({ status, transaction_reference: updatedPayment.transaction_reference, paid_at: updatedPayment.paid_at, updated_at: now }).eq('order_id', orderId); if (paymentUpdate.error) throw paymentUpdate.error;\n\n        const orderPaymentUpdate = await supabase.from('orders').update({ payment_status: status, updated_at: now }).eq('id', orderId); if (orderPaymentUpdate.error) throw orderPaymentUpdate.error;\n      } catch (e) {\n        console.error('Supabase update payment error', e);\n      }\n"""
-          new = """        const paymentUpdate = await supabase.from('payments').update({ status, transaction_reference: updatedPayment.transaction_reference, paid_at: updatedPayment.paid_at, updated_at: now }).eq('order_id', orderId);\n        if (paymentUpdate.error) throw new Error(`Payment update failed: ${paymentUpdate.error.message}`);\n\n        const orderPaymentUpdate = await supabase.from('orders').update({ payment_status: status, updated_at: now }).eq('id', orderId);\n        if (orderPaymentUpdate.error) throw new Error(`Order payment status update failed: ${orderPaymentUpdate.error.message}`);\n      } catch (e) {\n        console.error('Supabase update payment error', e);\n        throw e;\n      }\n"""
-          if old not in s:
-            raise SystemExit('payment write block not found; refusing partial patch')
-          s = s.replace(old, new, 1)
-
+          s = re.sub(r'(?<![A-Za-z0-9_])user_id:\s*', 'recipient_id: ', p.read_text())
           p.write_text(s)
           PY
       - name: Commit patched dashboard and storage
