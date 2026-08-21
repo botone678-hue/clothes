@@ -21,15 +21,20 @@ import { PrivacyPage } from './pages/PrivacyPage';
 import { TermsPage } from './pages/TermsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { SignupPage } from './pages/SignupPage';
+import { UserRole } from './types';
 
 const tabFromPath = () => {
   const path = window.location.pathname.replace(/\/+$/, '') || '/';
   if (path === '/signup') return 'signup';
+  if (path === '/driver' || path === '/driver-dashboard') return 'driver';
+  if (path === '/admin' || path === '/admin-dashboard') return 'admin';
+  if (path === '/orders' || path === '/customer-orders') return 'customer-orders';
+  if (path === '/addresses' || path === '/customer-addresses') return 'customer-addresses';
   return 'home';
 };
 
 const MainAppContent: React.FC = () => {
-  const { user } = useAuth();
+  const { user, role, isLoading } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>(tabFromPath);
   const [services, setServices] = useState<Service[]>([]);
   const [trackingOrderId, setTrackingOrderId] = useState<string | undefined>();
@@ -59,7 +64,7 @@ const MainAppContent: React.FC = () => {
 
   const handleSetTab = (tab: string) => {
     setCurrentTab(tab);
-    const path = tab === 'signup' ? '/signup' : '/';
+    const path = tab === 'signup' ? '/signup' : tab === 'driver' ? '/driver' : tab === 'admin' ? '/admin' : tab === 'customer-orders' ? '/orders' : tab === 'customer-addresses' ? '/addresses' : '/';
     if (window.location.pathname !== path) window.history.pushState({}, '', path);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -69,23 +74,35 @@ const MainAppContent: React.FC = () => {
     handleSetTab('tracking');
   };
 
+  const accessDenied = (required: UserRole) => (
+    <div className="min-h-[60vh] flex items-center justify-center px-4 py-12">
+      <div className="max-w-md w-full bg-white border border-slate-200 rounded-2xl shadow-sm p-8 text-center">
+        <h1 className="text-xl font-bold text-slate-900 mb-2">Access Restricted</h1>
+        <p className="text-sm text-slate-600 mb-6">This area is only available to {required === 'driver' ? 'authorized drivers' : 'administrators'}.</p>
+        <button type="button" onClick={() => handleSetTab('home')} className="px-5 py-2.5 rounded-xl bg-sky-600 text-white font-semibold hover:bg-sky-700">Return to Home</button>
+      </div>
+    </div>
+  );
+
   const renderContent = () => {
+    if (isLoading) return <div className="min-h-[60vh] flex items-center justify-center text-sm text-slate-500">Loading…</div>;
+
     switch (currentTab) {
       case 'home': return <HomePage services={services} setCurrentTab={handleSetTab} onOpenAuth={() => openAuth('signin')} />;
-      case 'signup': return <SignupPage setCurrentTab={handleSetTab} />;
+      case 'signup': return user && role !== 'customer' ? <HomePage services={services} setCurrentTab={handleSetTab} onOpenAuth={() => openAuth('signin')} /> : <SignupPage setCurrentTab={handleSetTab} />;
       case 'services': return <ServicesPage services={services} setCurrentTab={handleSetTab} />;
       case 'about': return <AboutPage setCurrentTab={handleSetTab} />;
       case 'contact': return <ContactPage />;
       case 'book': return <BookPage services={services} setCurrentTab={handleSetTab} onViewOrder={handleTrackOrder} />;
       case 'tracking': return <TrackingPage initialOrderId={trackingOrderId} setCurrentTab={handleSetTab} />;
       case 'orders':
-      case 'customer-orders': return <CustomerOrders setCurrentTab={handleSetTab} onTrackOrder={handleTrackOrder} />;
+      case 'customer-orders': return role === 'customer' ? <CustomerOrders setCurrentTab={handleSetTab} onTrackOrder={handleTrackOrder} /> : accessDenied('customer');
       case 'addresses':
-      case 'customer-addresses': return <CustomerAddresses />;
+      case 'customer-addresses': return role === 'customer' ? <CustomerAddresses /> : accessDenied('customer');
       case 'driver':
-      case 'driver-dashboard': return <DriverDashboard />;
+      case 'driver-dashboard': return role === 'driver' ? <DriverDashboard /> : accessDenied('driver');
       case 'admin':
-      case 'admin-dashboard': return <AdminDashboard services={services} onRefreshServices={fetchServices} />;
+      case 'admin-dashboard': return role === 'admin' ? <AdminDashboard services={services} onRefreshServices={fetchServices} /> : accessDenied('admin');
       case 'privacy': return <PrivacyPage setCurrentTab={handleSetTab} />;
       case 'terms': return <TermsPage setCurrentTab={handleSetTab} />;
       default: return <NotFoundPage setCurrentTab={handleSetTab} />;
