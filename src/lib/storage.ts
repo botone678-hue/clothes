@@ -883,7 +883,7 @@ export const db = {
 
     if (status === 'paid') {
       await db.createNotification({
-        user_id: updatedPayment.customer_id,
+        recipient_id: updatedPayment.customer_id,
         order_id: orderId,
         type: 'payment_successful',
         title: 'Payment Verified & Confirmed',
@@ -891,7 +891,7 @@ export const db = {
       });
     } else if (status === 'verification_required') {
       await db.createNotification({
-        user_id: updatedPayment.customer_id,
+        recipient_id: updatedPayment.customer_id,
         order_id: orderId,
         type: 'payment_verification',
         title: 'Payment Reference Submitted',
@@ -899,7 +899,7 @@ export const db = {
       });
     } else if (status === 'failed') {
       await db.createNotification({
-        user_id: updatedPayment.customer_id,
+        recipient_id: updatedPayment.customer_id,
         order_id: orderId,
         type: 'payment_failed',
         title: 'Payment Verification Unsuccessful',
