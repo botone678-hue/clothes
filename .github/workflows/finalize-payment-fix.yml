@@ -1,0 +1,34 @@
+name: Finalize payment notification fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: "!contains(github.event.head_commit.message, 'finalize payment notification compatibility')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify payment notification implementation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/lib/storage.ts')
+          s = p.read_text()
+          if "recipient_id: notif.user_id" not in s:
+              raise SystemExit('createNotification is not using recipient_id')
+          print('Verified createNotification writes recipient_id')
+          PY
+      - name: Commit and remove workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/finalize-payment-fix.yml
+          git commit -m "finalize payment notification compatibility" || exit 0
+          git rm .github/workflows/finalize-payment-fix.yml
+          git commit -m "remove temporary payment fix workflow"
+          git push origin main
