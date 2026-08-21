@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { db, INITIAL_ADMIN, INITIAL_DRIVERS } from '../lib/storage';
+import { db } from '../lib/storage';
 import { Profile, UserRole } from '../types';
 
 interface AuthContextType {
@@ -22,150 +22,271 @@ const AUTH_USER_KEY = 'csl_current_user_v1';
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSupabaseOnline, setIsSupabaseOnline] = useState(isSupabaseConfigured);
+  const [isSupabaseOnline] = useState(isSupabaseConfigured);
+
+  const clearLocalAuth = () => {
+    localStorage.removeItem(AUTH_USER_KEY);
+    setUser(null);
+  };
+
+  const loadProfileForSession = async (authUserId: string): Promise<Profile | null> => {
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('auth_user_id', authUserId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Unable to load authenticated profile:', error);
+      return null;
+    }
+
+    if (!profile) return null;
+    return profile as Profile;
+  };
 
   useEffect(() => {
+    let mounted = true;
+
     async function initAuth() {
       setIsLoading(true);
-      if (isSupabaseConfigured) {
-        try {
-          const { data: { session }, error } = await supabase.auth.getSession();
-          if (!error && session?.user) {
-            const { data: profile } = await supabase.from('profiles').select('*').eq('auth_user_id', session.user.id).single();
-            if (profile) { setUser(profile); setIsLoading(false); return; }
-          }
-        } catch (e) { console.warn('Supabase session load error:', e); }
+      // Never restore a client-created/demo account. The only valid session is Supabase Auth.
+      localStorage.removeItem(AUTH_USER_KEY);
+
+      if (!isSupabaseConfigured) {
+        if (mounted) {
+          setUser(null);
+          setIsLoading(false);
+        }
+        return;
       }
 
       try {
-        const stored = localStorage.getItem(AUTH_USER_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          setUser(parsed);
-        } else {
-          const defaultCustomer: Profile = {
-            id: 'cust-demo-1', full_name: 'Wanjiku Mwangi', email: 'wanjiku.mwangi@gmail.com', phone: '0741775878',
-            role: 'customer', status: 'active',
-            avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
-            created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-          };
-          setUser(defaultCustomer);
-          localStorage.setItem(AUTH_USER_KEY, JSON.stringify(defaultCustomer));
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+
+        if (!session?.user) {
+          if (mounted) setUser(null);
+          return;
         }
-      } catch (e) { console.error('Error loading stored user:', e); }
-      finally { setIsLoading(false); }
+
+        const profile = await loadProfileForSession(session.user.id);
+        if (mounted) {
+          if (profile) {
+            setUser(profile);
+          } else {
+            // A valid auth session without a profile is not granted an application role.
+            await supabase.auth.signOut();
+            setUser(null);
+          }
+        }
+      } catch (e) {
+        console.error('Supabase session load error:', e);
+        if (mounted) setUser(null);
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
     }
 
     initAuth();
-    if (isSupabaseConfigured) {
-      const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-        if (event === 'SIGNED_IN' && session?.user) {
-          const { data: profile } = await supabase.from('profiles').select('*').eq('auth_user_id', session.user.id).single();
-          if (profile) { setUser(profile); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(profile)); }
-        }
-      });
-      return () => authListener.subscription.unsubscribe();
+
+    if (!isSupabaseConfigured) {
+      return () => { mounted = false; };
     }
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
+
+      if (event === 'SIGNED_OUT' || !session?.user) {
+        clearLocalAuth();
+        setIsLoading(false);
+        return;
+      }
+
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        const profile = await loadProfileForSession(session.user.id);
+        if (profile) {
+          setUser(profile);
+        } else {
+          await supabase.auth.signOut();
+          clearLocalAuth();
+        }
+        setIsLoading(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
-  const signIn = async (email: string, password?: string, role?: UserRole): Promise<{ success: boolean; error?: string }> => {
-    setIsLoading(true);
-    if (isSupabaseConfigured && password) {
-      try {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) { setIsLoading(false); return { success: false, error: error.message }; }
-        if (data.user) {
-          const { data: profile } = await supabase.from('profiles').select('*').eq('auth_user_id', data.user.id).single();
-          if (profile) { setUser(profile); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(profile)); setIsLoading(false); return { success: true }; }
-        }
-      } catch (err: any) { console.warn('Supabase signin error, checking local profiles:', err); }
+  const signIn = async (email: string, password?: string, _role?: UserRole): Promise<{ success: boolean; error?: string }> => {
+    if (!isSupabaseConfigured) {
+      return { success: false, error: 'Authentication is not configured. Please connect Supabase Auth.' };
+    }
+    if (!password) {
+      return { success: false, error: 'Password is required.' };
     }
 
-    const profiles = await db.getProfiles();
-    let matched = profiles.find((p) => p.email.toLowerCase() === email.toLowerCase());
-    if (!matched) {
-      matched = await db.saveProfile({
-        full_name: email.split('@')[0].replace('.', ' '), email, phone: '0741775878',
-        role: 'customer', status: 'active',
-      });
+    setIsLoading(true);
+    clearLocalAuth();
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (error || !data.user) {
+        setIsLoading(false);
+        return { success: false, error: error?.message || 'Invalid email or password.' };
+      }
+
+      const profile = await loadProfileForSession(data.user.id);
+      if (!profile) {
+        await supabase.auth.signOut();
+        setIsLoading(false);
+        return { success: false, error: 'Your account has no valid application profile. Contact an administrator.' };
+      }
+
+      if (profile.status && profile.status !== 'active') {
+        await supabase.auth.signOut();
+        setIsLoading(false);
+        return { success: false, error: 'Your account is not active. Contact an administrator.' };
+      }
+
+      setUser(profile);
+      setIsLoading(false);
+      return { success: true };
+    } catch (err: any) {
+      setIsLoading(false);
+      return { success: false, error: err?.message || 'Unable to sign in.' };
     }
-    setUser(matched); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(matched)); setIsLoading(false);
-    return { success: true };
   };
 
   const signUp = async (
-    email: string, password: string, fullName: string, phone: string, _role: UserRole = 'customer'
+    email: string,
+    password: string,
+    fullName: string,
+    phone: string,
+    _role: UserRole = 'customer'
   ): Promise<{ success: boolean; error?: string }> => {
-    setIsLoading(true);
-    const customerRole: UserRole = 'customer';
-
-    if (isSupabaseConfigured) {
-      try {
-        const { data, error } = await supabase.auth.signUp({
-          email, password,
-          options: { data: { full_name: fullName, phone, role: customerRole } },
-        });
-        if (error) { setIsLoading(false); return { success: false, error: error.message }; }
-        if (data.user) {
-          const newProfile = await db.saveProfile({ auth_user_id: data.user.id, full_name: fullName, email, phone, role: customerRole, status: 'active' });
-          setUser(newProfile); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(newProfile)); setIsLoading(false);
-          return { success: true };
-        }
-      } catch (err: any) { console.warn('Supabase signup fallback to database profile:', err); }
+    if (!isSupabaseConfigured) {
+      return { success: false, error: 'Authentication is not configured. Please connect Supabase Auth.' };
     }
 
-    const newProfile = await db.saveProfile({ full_name: fullName, email, phone, role: customerRole, status: 'active' });
-    setUser(newProfile); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(newProfile)); setIsLoading(false);
-    return { success: true };
+    setIsLoading(true);
+    clearLocalAuth();
+
+    try {
+      // Public registration can only ever create a customer.
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: { data: { full_name: fullName, phone, role: 'customer' } },
+      });
+
+      if (error) {
+        setIsLoading(false);
+        return { success: false, error: error.message };
+      }
+
+      if (!data.user) {
+        setIsLoading(false);
+        return { success: false, error: 'Unable to create your account.' };
+      }
+
+      const newProfile = await db.saveProfile({
+        auth_user_id: data.user.id,
+        full_name: fullName,
+        email: email.trim(),
+        phone,
+        role: 'customer',
+        status: 'active',
+      });
+
+      // If email confirmation is enabled, there may be no active session yet.
+      if (data.session) {
+        setUser(newProfile);
+      } else {
+        setUser(null);
+      }
+
+      setIsLoading(false);
+      return {
+        success: true,
+        ...(data.session ? {} : { error: 'Account created. Please verify your email, then sign in.' }),
+      };
+    } catch (err: any) {
+      setIsLoading(false);
+      return { success: false, error: err?.message || 'Unable to create your account.' };
+    }
   };
 
   const signOut = async () => {
-    if (isSupabaseConfigured) {
-      try { await supabase.auth.signOut(); } catch (e) { console.error('Supabase signout error', e); }
+    setIsLoading(true);
+    try {
+      if (isSupabaseConfigured) {
+        await supabase.auth.signOut();
+      }
+    } catch (e) {
+      console.error('Supabase signout error', e);
+    } finally {
+      clearLocalAuth();
+      setIsLoading(false);
     }
-    const guestCustomer: Profile = {
-      id: `cust-${Date.now()}`, full_name: 'Guest Customer', email: 'guest@clothesspa.co.ke', phone: '0741775878',
-      role: 'customer', status: 'active', created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-    };
-    setUser(guestCustomer); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(guestCustomer));
   };
 
   const resetPassword = async (email: string): Promise<{ success: boolean; message?: string; error?: string }> => {
-    if (isSupabaseConfigured) {
-      try {
-        const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/reset-password` });
-        if (error) return { success: false, error: error.message };
-        return { success: true, message: `Password reset instructions have been sent to ${email}. Check your inbox.` };
-      } catch (err: any) { return { success: false, error: err.message }; }
+    if (!isSupabaseConfigured) {
+      return { success: false, error: 'Authentication is not configured.' };
     }
-    return { success: true, message: `Password reset link generated for ${email}. (In production with Supabase, an email with a secure token is dispatched).` };
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) return { success: false, error: error.message };
+      return { success: true, message: `Password reset instructions have been sent to ${email}. Check your inbox.` };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Unable to send password reset instructions.' };
+    }
   };
 
   const updateProfile = async (updates: Partial<Profile>): Promise<Profile | null> => {
-    if (!user) return null;
-    const updated = await db.saveProfile({ ...user, ...updates });
-    setUser(updated); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(updated));
-    return updated;
+    if (!user || !isSupabaseConfigured) return null;
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(updates)
+      .eq('auth_user_id', user.auth_user_id)
+      .select('*')
+      .single();
+
+    if (error || !data) {
+      console.error('Unable to update profile:', error);
+      return null;
+    }
+
+    setUser(data as Profile);
+    return data as Profile;
   };
 
-  const switchUserRole = (targetRole: UserRole) => {
-    // Role switching is a development-only tester feature. Never allow it in production.
-    if (!import.meta.env.DEV) return;
-    if (targetRole === 'admin') {
-      setUser(INITIAL_ADMIN); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(INITIAL_ADMIN));
-    } else if (targetRole === 'driver') {
-      const driver = INITIAL_DRIVERS[0]; setUser(driver); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(driver));
-    } else {
-      const cust: Profile = {
-        id: 'cust-demo-1', full_name: 'Wanjiku Mwangi', email: 'wanjiku.mwangi@gmail.com', phone: '0741775878', role: 'customer', status: 'active',
-        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-      };
-      setUser(cust); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(cust));
-    }
+  const switchUserRole = (_targetRole: UserRole) => {
+    // Intentionally disabled. Roles must come from the authenticated Supabase profile.
+    console.warn('Client-side role switching is disabled.');
   };
 
   return (
-    <AuthContext.Provider value={{ user, role: user?.role || 'customer', isLoading, isSupabaseOnline, signIn, signUp, signOut, resetPassword, updateProfile, switchUserRole }}>
+    <AuthContext.Provider value={{
+      user,
+      role: user?.role || 'customer',
+      isLoading,
+      isSupabaseOnline,
+      signIn,
+      signUp,
+      signOut,
+      resetPassword,
+      updateProfile,
+      switchUserRole,
+    }}>
       {children}
     </AuthContext.Provider>
   );
