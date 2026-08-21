@@ -1,0 +1,52 @@
+name: Fix production schema mismatches
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix: patch production schema mismatches'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch notification recipient field
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/lib/storage.ts')
+          s = p.read_text()
+          old = s
+          s = s.replace('user_id: updatedPayment.customer_id', 'recipient_id: updatedPayment.customer_id')
+          s = s.replace('user_id: payment.customer_id', 'recipient_id: payment.customer_id')
+          if s == old:
+              print('No user_id payment notification fields found; continuing.')
+          p.write_text(s)
+          PY
+
+      - name: Harden customer order total rendering
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/pages/CustomerOrders.tsx')
+          s = p.read_text()
+          s = s.replace('order.total.toLocaleString()', 'Number(order.total ?? 0).toLocaleString()')
+          s = s.replace('(order.total || 0).toLocaleString()', 'Number(order.total ?? 0).toLocaleString()')
+          p.write_text(s)
+          PY
+
+      - name: Commit and push fixes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/storage.ts src/pages/CustomerOrders.tsx
+          if git diff --cached --quiet; then
+            echo 'No changes required.'
+            exit 0
+          fi
+          git commit -m 'fix: patch production schema mismatches'
+          git push
