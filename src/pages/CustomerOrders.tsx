@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { db, subscribeToEvent } from '../lib/storage';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { Order } from '../types';
-import { Package, Clock, MapPin, Calendar, Eye, RefreshCw, Sparkles } from 'lucide-react';
+import { Package, Clock, MapPin, Calendar, Eye, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
 
 interface CustomerOrdersProps {
   setCurrentTab: (tab: string) => void;
@@ -16,9 +17,10 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ setCurrentTab, o
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
   const loadOrders = async () => {
+    if (!user?.id) return;
     setLoading(true);
     try {
-      const all = await db.getOrders({ customerId: user?.id });
+      const all = await db.getOrders({ customerId: user.id });
       setOrders(all);
     } catch (error) {
       console.error('Failed to load customer orders:', error);
@@ -29,9 +31,31 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ setCurrentTab, o
   };
 
   useEffect(() => {
+    if (!user?.id) return;
+
     void loadOrders();
-    const unsub = subscribeToEvent('orders', () => void loadOrders());
-    return () => unsub();
+    const unsubLocal = subscribeToEvent('orders', () => void loadOrders());
+
+    // Cross-device realtime: payment verification updates the order.payment_status
+    // in Supabase. Subscribe directly so the customer's phone updates without refresh.
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    if (isSupabaseConfigured) {
+      channel = supabase
+        .channel(`customer-orders-${user.id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'orders', filter: `customer_id=eq.${user.id}` },
+          () => void loadOrders(),
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') console.info('Customer order realtime connected');
+        });
+    }
+
+    return () => {
+      unsubLocal();
+      if (channel) void supabase.removeChannel(channel);
+    };
   }, [user?.id]);
 
   const filteredOrders = filterStatus === 'all' ? orders : orders.filter((o) => o.status === filterStatus);
@@ -52,6 +76,19 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ setCurrentTab, o
         return 'bg-rose-100 text-rose-800 border-rose-200';
       default:
         return 'bg-amber-100 text-amber-800 border-amber-200';
+    }
+  };
+
+  const getPaymentDisplay = (paymentStatus: string | undefined) => {
+    switch (paymentStatus) {
+      case 'paid':
+        return { label: 'Approved', className: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
+      case 'verification_required':
+        return { label: 'Verification in progress', className: 'bg-sky-100 text-sky-800 border-sky-200' };
+      case 'failed':
+        return { label: 'Payment rejected', className: 'bg-rose-100 text-rose-800 border-rose-200' };
+      default:
+        return { label: 'Pending', className: 'bg-amber-100 text-amber-800 border-amber-200' };
     }
   };
 
@@ -95,6 +132,7 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ setCurrentTab, o
             const safeTotal = Number(order.total ?? 0);
             const safeCreatedAt = order.created_at ? new Date(order.created_at) : null;
             const safeStatus = String(order.status ?? 'pending');
+            const payment = getPaymentDisplay(order.payment_status);
             return (
               <div key={order.id} className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-all space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
@@ -115,15 +153,26 @@ export const CustomerOrders: React.FC<CustomerOrdersProps> = ({ setCurrentTab, o
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-600">
                   <div className="flex items-center gap-2"><MapPin className="w-4 h-4 text-sky-600 flex-shrink-0" /><span><strong>Pickup:</strong> {order.pickup_area ?? 'Not specified'} ({order.pickup_address_text ?? 'Address unavailable'})</span></div>
                   <div className="flex items-center gap-2"><Calendar className="w-4 h-4 text-sky-600 flex-shrink-0" /><span><strong>Schedule:</strong> {order.pickup_date ?? 'Not scheduled'} ({order.pickup_time ?? 'Time unavailable'})</span></div>
-                  <div className="flex items-center gap-2"><Clock className="w-4 h-4 text-sky-600 flex-shrink-0" /><span><strong>Payment:</strong> {order.payment_status ?? 'pending'} ({order.payment_method ?? 'Not specified'})</span></div>
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className={`w-4 h-4 flex-shrink-0 ${order.payment_status === 'paid' ? 'text-emerald-600' : 'text-sky-600'}`} />
+                    <span><strong>Payment:</strong> <span className="font-bold">{payment.label}</span> ({order.payment_method ?? 'Not specified'})</span>
+                  </div>
                 </div>
                 {order.items && order.items.length > 0 && (
-                  <div className="p-3 bg-slate-50 rounded-2xl flex flex-wrap gap-2 text-[11px] text-slate-700">
-                    {order.items.map((it) => <span key={it.id} className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg font-medium">{it.service_name} (x{it.quantity})</span>)}
+                  <div className="bg-slate-50 rounded-2xl p-4">
+                    <div className="text-xs font-bold text-slate-700 mb-2">Services</div>
+                    <div className="space-y-1.5">
+                      {order.items.map((item, index) => (
+                        <div key={`${order.id}-item-${index}`} className="flex items-center justify-between text-xs text-slate-600">
+                          <span>{item.service_name} × {item.quantity}</span>
+                          <span className="font-semibold">KES {Number(item.total ?? item.unit_price ?? 0).toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
-                <div className="pt-2 flex items-center justify-end gap-3">
-                  <button type="button" onClick={() => onTrackOrder(order.id)} className="px-4 py-2 bg-sky-50 hover:bg-sky-100 text-sky-700 font-bold text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer"><Eye className="w-4 h-4" /><span>Track Live Status</span></button>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button type="button" onClick={() => onTrackOrder(order.id)} className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5"><Eye className="w-4 h-4" />Track Order</button>
                 </div>
               </div>
             );
