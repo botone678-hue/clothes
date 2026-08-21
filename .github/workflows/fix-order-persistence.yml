@@ -1,0 +1,49 @@
+name: Fix order persistence
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix-order-storage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch order persistence
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/lib/storage.ts')
+          s = p.read_text()
+
+          replacements = [
+            ("const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;", "const orderId = crypto.randomUUID();"),
+            ("id: `item-${Date.now()}-${idx}`,", "id: crypto.randomUUID(),"),
+            ("id: `pay-${Date.now()}`,", "id: crypto.randomUUID(),"),
+            ("""        await supabase.from('orders').insert({""", """        const { error: orderInsertError } = await supabase.from('orders').insert({"""),
+            ("""        });\n\n        await supabase.from('order_items').insert(""", """        });\n        if (orderInsertError) throw new Error(`Order insert failed: ${orderInsertError.message}`);\n\n        const { error: itemsInsertError } = await supabase.from('order_items').insert("""),
+            ("""        );\n\n        await supabase.from('payments').insert({""", """        );\n        if (itemsInsertError) throw new Error(`Order items insert failed: ${itemsInsertError.message}`);\n\n        const { error: paymentInsertError } = await supabase.from('payments').insert({"""),
+            ("""          status: newPayment.status,\n        });\n      } catch (e) {""", """          status: newPayment.status,\n        });\n        if (paymentInsertError) throw new Error(`Payment insert failed: ${paymentInsertError.message}`);\n      } catch (e) {"""),
+          ]
+
+          for old, new in replacements:
+            if old not in s:
+              raise SystemExit(f'Missing expected source text: {old[:100]}')
+            s = s.replace(old, new, 1)
+
+          p.write_text(s)
+
+      - name: Commit patched storage
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/storage.ts .github/workflows/fix-order-persistence.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: persist customer orders with valid UUIDs"
+          git push
