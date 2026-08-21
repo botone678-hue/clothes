@@ -1,0 +1,115 @@
+name: Fix payment notification runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch notification recipient handling and payment safety
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/lib/storage.ts')
+          s = p.read_text()
+
+          old = """  async createNotification(notif: Omit<Notification, 'id' | 'read' | 'created_at'>): Promise<Notification> {
+    const all = getLocal<Notification[]>(KEYS.NOTIFICATIONS, []);
+    const newNotif: Notification = {
+      ...notif,
+      id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      read: false,
+      created_at: new Date().toISOString(),
+    };
+    all.unshift(newNotif);
+    setLocal(KEYS.NOTIFICATIONS, all);
+    emitEvent('notifications', newNotif);
+
+    if (isSupabaseConfigured && notif.user_id && !notif.user_id.startsWith('cust-') && !notif.user_id.startsWith('drv-') && !notif.user_id.startsWith('admin-')) {
+      try {
+        await supabase.from('notifications').insert({
+          recipient_id: notif.user_id,
+          order_id: notif.order_id,
+          type: notif.type,
+          title: notif.title,
+          message: notif.message,
+          read: false,
+        });
+      } catch (e) {
+        console.error('Supabase createNotification error', e);
+      }
+    }
+
+    return newNotif;
+  },"""
+
+          new = """  async createNotification(notif: any): Promise<Notification> {
+    const recipientId = notif.recipient_id || notif.user_id;
+    const all = getLocal<Notification[]>(KEYS.NOTIFICATIONS, []);
+    const newNotif: Notification = {
+      id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      user_id: recipientId || '',
+      order_id: notif.order_id,
+      type: notif.type,
+      title: notif.title,
+      message: notif.message,
+      read: false,
+      created_at: new Date().toISOString(),
+    };
+    all.unshift(newNotif);
+    setLocal(KEYS.NOTIFICATIONS, all);
+    emitEvent('notifications', newNotif);
+
+    if (isSupabaseConfigured && recipientId && !recipientId.startsWith('cust-') && !recipientId.startsWith('drv-') && !recipientId.startsWith('admin-')) {
+      try {
+        const { error } = await supabase.from('notifications').insert({
+          recipient_id: recipientId,
+          order_id: notif.order_id,
+          type: notif.type,
+          title: notif.title,
+          message: notif.message,
+          read: false,
+        });
+        if (error) console.error('Supabase createNotification error', error);
+      } catch (e) {
+        console.error('Supabase createNotification error', e);
+      }
+    }
+
+    return newNotif;
+  },"""
+
+          if old in s:
+              s = s.replace(old, new, 1)
+          else:
+              raise SystemExit('Expected createNotification block not found')
+
+          s = s.replace("updatedPayment.amount.toLocaleString()", "Number(updatedPayment.amount ?? 0).toLocaleString()")
+          p.write_text(s)
+          PY
+
+          grep -n "const recipientId = notif.recipient_id || notif.user_id" src/lib/storage.ts
+          grep -n "Number(updatedPayment.amount ?? 0).toLocaleString" src/lib/storage.ts
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/storage.ts
+          if git diff --cached --quiet; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git commit -m "fix: make payment notifications recipient-safe"
+          git push
