@@ -23,14 +23,13 @@ import { TermsPage } from './pages/TermsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 const MainAppContent: React.FC = () => {
-  const { user, role } = useAuth();
+  const { role } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>('home');
   const [services, setServices] = useState<Service[]>([]);
   const [trackingOrderId, setTrackingOrderId] = useState<string | undefined>(undefined);
-
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
-
   const [toastMessage, setToastMessage] = useState<{ title: string; body: string; type?: 'info' | 'success' | 'alert' } | null>(null);
 
   const fetchServices = async () => {
@@ -40,7 +39,6 @@ const MainAppContent: React.FC = () => {
 
   useEffect(() => {
     fetchServices();
-
     const unsubNotify = subscribeToEvent('notification', (payload) => {
       setToastMessage({
         title: payload.title || 'Clothes Spa Notification',
@@ -48,11 +46,13 @@ const MainAppContent: React.FC = () => {
         type: payload.type || 'info',
       });
     });
-
-    return () => {
-      unsubNotify();
-    };
+    return () => unsubNotify();
   }, []);
+
+  const openAuth = (mode: 'signin' | 'signup' = 'signin') => {
+    setAuthMode(mode);
+    setIsAuthModalOpen(true);
+  };
 
   const handleTrackOrder = (orderId: string) => {
     setTrackingOrderId(orderId);
@@ -68,88 +68,55 @@ const MainAppContent: React.FC = () => {
   const renderContent = () => {
     switch (currentTab) {
       case 'home':
-        return (
-          <HomePage
-            services={services}
-            setCurrentTab={handleSetTab}
-            onOpenAuth={() => setIsAuthModalOpen(true)}
-          />
-        );
-      case 'services':
-        return <ServicesPage services={services} setCurrentTab={handleSetTab} />;
-      case 'about':
-        return <AboutPage setCurrentTab={handleSetTab} />;
-      case 'contact':
-        return <ContactPage />;
-      case 'book':
-        return (
-          <BookPage
-            services={services}
-            setCurrentTab={handleSetTab}
-            onViewOrder={handleTrackOrder}
-          />
-        );
-      case 'tracking':
-        return (
-          <TrackingPage
-            initialOrderId={trackingOrderId}
-            setCurrentTab={handleSetTab}
-          />
-        );
+        return <HomePage services={services} setCurrentTab={handleSetTab} onOpenAuth={() => openAuth('signin')} />;
+      case 'services': return <ServicesPage services={services} setCurrentTab={handleSetTab} />;
+      case 'about': return <AboutPage setCurrentTab={handleSetTab} />;
+      case 'contact': return <ContactPage />;
+      case 'book': return <BookPage services={services} setCurrentTab={handleSetTab} onViewOrder={handleTrackOrder} />;
+      case 'tracking': return <TrackingPage initialOrderId={trackingOrderId} setCurrentTab={handleSetTab} />;
       case 'orders':
-      case 'customer-orders':
-        return (
-          <CustomerOrders
-            setCurrentTab={handleSetTab}
-            onTrackOrder={handleTrackOrder}
-          />
-        );
+      case 'customer-orders': return <CustomerOrders setCurrentTab={handleSetTab} onTrackOrder={handleTrackOrder} />;
       case 'addresses':
-      case 'customer-addresses':
-        return <CustomerAddresses />;
+      case 'customer-addresses': return <CustomerAddresses />;
       case 'driver':
-      case 'driver-dashboard':
-        return <DriverDashboard />;
+      case 'driver-dashboard': return <DriverDashboard />;
       case 'admin':
-      case 'admin-dashboard':
-        return (
-          <AdminDashboard
-            services={services}
-            onRefreshServices={fetchServices}
-          />
-        );
-      case 'privacy':
-        return <PrivacyPage setCurrentTab={handleSetTab} />;
-      case 'terms':
-        return <TermsPage setCurrentTab={handleSetTab} />;
-      default:
-        return <NotFoundPage setCurrentTab={handleSetTab} />;
+      case 'admin-dashboard': return <AdminDashboard services={services} onRefreshServices={fetchServices} />;
+      case 'privacy': return <PrivacyPage setCurrentTab={handleSetTab} />;
+      case 'terms': return <TermsPage setCurrentTab={handleSetTab} />;
+      default: return <NotFoundPage setCurrentTab={handleSetTab} />;
     }
   };
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-sky-500 selection:text-white font-sans antialiased">
-      {toastMessage && (
-        <NotificationToast
-          title={toastMessage.title}
-          message={toastMessage.body}
-          type={toastMessage.type}
-          onClose={() => setToastMessage(null)}
-        />
+      {toastMessage && <NotificationToast title={toastMessage.title} message={toastMessage.body} type={toastMessage.type} onClose={() => setToastMessage(null)} />}
+
+      <Navbar currentTab={currentTab} setCurrentTab={handleSetTab} onOpenAuth={() => openAuth('signin')} />
+
+      {/* Clear public sign-up entry point. This opens the existing AuthModal in signup mode. */}
+      {!role && (
+        <div className="bg-white border-b border-slate-200 px-4 py-2">
+          <div className="max-w-7xl mx-auto flex items-center justify-center gap-2 text-sm">
+            <span className="text-slate-500">New to Clothes Spa?</span>
+            <button
+              id="public-signup-trigger"
+              type="button"
+              onClick={() => openAuth('signup')}
+              className="font-bold text-sky-700 hover:text-sky-800 underline underline-offset-2"
+            >
+              Create an Account
+            </button>
+          </div>
+        </div>
       )}
 
-      <Navbar
-        currentTab={currentTab}
-        setCurrentTab={handleSetTab}
-        onOpenAuth={() => setIsAuthModalOpen(true)}
-      />
-
       <main className="flex-1">{renderContent()}</main>
-
       <Footer setCurrentTab={handleSetTab} />
 
       <AuthModal
         isOpen={isAuthModalOpen}
+        initialMode={authMode}
         onClose={() => setIsAuthModalOpen(false)}
         onOpenForgot={() => {
           setIsAuthModalOpen(false);
@@ -162,7 +129,7 @@ const MainAppContent: React.FC = () => {
         onClose={() => setIsForgotPasswordOpen(false)}
         onBackToLogin={() => {
           setIsForgotPasswordOpen(false);
-          setIsAuthModalOpen(true);
+          openAuth('signin');
         }}
       />
     </div>
