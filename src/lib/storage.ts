@@ -487,7 +487,7 @@ export const db = {
     const subtotal = params.items.reduce((sum, item) => sum + item.service.base_price * item.quantity, 0);
     const total = subtotal + deliveryFee;
 
-    const orderId = `ord-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const orderId = crypto.randomUUID();
     const orderNumber = generateOrderNumber();
     const now = new Date().toISOString();
 
@@ -517,7 +517,7 @@ export const db = {
     };
 
     const newOrderItems: OrderItem[] = params.items.map((item, idx) => ({
-      id: `item-${Date.now()}-${idx}`,
+      id: crypto.randomUUID(),
       order_id: orderId,
       service_id: item.service.id,
       service_name: item.service.name,
@@ -531,7 +531,7 @@ export const db = {
     newOrder.items = newOrderItems;
 
     const newPayment: Payment = {
-      id: `pay-${Date.now()}`,
+      id: crypto.randomUUID(),
       order_id: orderId,
       order_number: orderNumber,
       customer_id: params.customerId,
@@ -581,7 +581,7 @@ export const db = {
 
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('orders').insert({
+        const { error: orderInsertError } = await supabase.from('orders').insert({
           id: newOrder.id,
           order_number: newOrder.order_number,
           customer_id: newOrder.customer_id.startsWith('cust-') ? null : newOrder.customer_id,
@@ -603,8 +603,9 @@ export const db = {
           payment_method: newOrder.payment_method,
           special_instructions: newOrder.special_instructions,
         });
+        if (orderInsertError) throw new Error(`Order insert failed: ${orderInsertError.message}`);
 
-        await supabase.from('order_items').insert(
+        const { error: itemsInsertError } = await supabase.from('order_items').insert(
           newOrderItems.map((it) => ({
             id: it.id,
             order_id: it.order_id,
@@ -616,8 +617,9 @@ export const db = {
             notes: it.notes,
           }))
         );
+        if (itemsInsertError) throw new Error(`Order items insert failed: ${itemsInsertError.message}`);
 
-        await supabase.from('payments').insert({
+        const { error: paymentInsertError } = await supabase.from('payments').insert({
           id: newPayment.id,
           order_id: newPayment.order_id,
           customer_id: newPayment.customer_id.startsWith('cust-') ? null : newPayment.customer_id,
@@ -625,6 +627,7 @@ export const db = {
           amount: newPayment.amount,
           status: newPayment.status,
         });
+        if (paymentInsertError) throw new Error(`Payment insert failed: ${paymentInsertError.message}`);
       } catch (e) {
         console.error('Supabase createOrder error', e);
       }
