@@ -559,7 +559,7 @@ export const db = {
 
     // Add Notification for Customer
     await db.createNotification({
-      user_id: params.customerId,
+      recipient_id: params.customerId,
       order_id: orderId,
       type: 'order_created',
       title: 'Order Placed Successfully!',
@@ -571,7 +571,7 @@ export const db = {
     const admins = profiles.filter((p) => p.role === 'admin');
     for (const admin of admins) {
       await db.createNotification({
-        user_id: admin.id,
+        recipient_id: admin.id,
         order_id: orderId,
         type: 'new_order_admin',
         title: `New Order #${orderNumber}`,
@@ -706,7 +706,7 @@ export const db = {
     const statusInfo = statusMessages[newStatus];
     if (statusInfo) {
       await db.createNotification({
-        user_id: updatedOrder.customer_id,
+        recipient_id: updatedOrder.customer_id,
         order_id: orderId,
         type: `order_status_${newStatus}`,
         title: statusInfo.title,
@@ -769,7 +769,7 @@ export const db = {
 
     // Notify driver
     await db.createNotification({
-      user_id: driver.id,
+      recipient_id: driver.id,
       order_id: orderId,
       type: 'new_job_assigned',
       title: 'New Pickup Job Assigned',
@@ -778,7 +778,7 @@ export const db = {
 
     // Notify customer
     await db.createNotification({
-      user_id: updatedOrder.customer_id,
+      recipient_id: updatedOrder.customer_id,
       order_id: orderId,
       type: 'driver_assigned',
       title: 'Driver Assigned for Pickup',
@@ -1134,7 +1134,7 @@ export const db = {
         if (!error && data) {
           return data.map((n: any) => ({
             id: n.id,
-            user_id: n.recipient_id || n.user_id,
+            recipient_id: n.recipient_id || n.user_id,
             order_id: n.order_id,
             type: n.type,
             title: n.title,
