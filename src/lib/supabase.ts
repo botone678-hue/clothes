@@ -1,12 +1,18 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim() || '';
+// The Supabase project URL is public client configuration. Keep the Vercel
+// variable supported, but provide the project's known URL as a build-safe
+// fallback so authentication does not incorrectly appear unconfigured when
+// Vercel fails to inject VITE_SUPABASE_URL into a Vite production build.
+const supabaseUrl =
+  import.meta.env.VITE_SUPABASE_URL?.trim() ||
+  'https://loznvcpwopvgnzmycntl.supabase.co';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() || '';
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+export const isSupabaseConfigured = Boolean(supabaseAnonKey);
 
 export const supabase: SupabaseClient = createClient(
-  isSupabaseConfigured ? supabaseUrl : 'https://placeholder.supabase.co',
+  supabaseUrl,
   isSupabaseConfigured ? supabaseAnonKey : 'placeholder-anon-key',
   {
     auth: {
